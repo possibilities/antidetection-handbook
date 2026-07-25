@@ -99,15 +99,15 @@ The main interaction paths use CDP input — `Input.dispatchMouseEvent`, `dispat
 
 But several fast paths synthesize events in the page instead:
 
-- `element.rs:1198` — sets `.value` directly, then fires `input` and `change`.
+- `element.rs:1180-1199` (`set_element_value`, reached only from the `setvalue` command at `actions.rs:6722`) — sets `.value` directly, then fires `input` and `change`.
 - `interaction.rs:154, 223, 455, 713-714, 832` — page-level `dispatchEvent(new Event(...))`.
 - `actions.rs:8784` — `select.dispatchEvent(new Event('change', ...))`.
 
-This is not an obscure fallback. The clear-field step that precedes ordinary typing (`interaction.rs:147-156`) runs `this.value = ''` plus a synthetic `input` via `Runtime.callFunctionOn`, and *then* types with trusted CDP key events. So the common path already mixes provenance within one action: untrusted clear, trusted keystrokes.
+`setvalue` is a deliberate escape hatch, so its being synthetic is a defensible design choice. The one that is not is in `fill` itself: the clear-field step at `interaction.rs:147-156` — inside `pub async fn fill` — runs `this.value = ''` plus a synthetic `input` via `Runtime.callFunctionOn`, and *then* types with trusted CDP key events. The common path therefore mixes provenance within a single action: untrusted clear, trusted keystrokes.
 
 Two consequences, and the first is the one that will actually bite:
 
-1. **Correctness.** Frameworks that track native setters — React's synthetic event system most notoriously — routinely ignore a bare `.value =` plus synthetic `input`. This is a well-known source of "the form filled but the app didn't notice" bugs. The failure is silent and looks like a flaky selector.
+1. **Correctness.** React's controlled inputs are the canonical case. React installs a value tracker on the DOM node, so a direct `node.value = …` assignment updates the tracker *before* the synthetic `input` event arrives; React then compares tracked-versus-current, sees no change, and dedupes the event away without calling `onChange`. The documented workaround is to invoke the native prototype setter rather than the instance property. Concretely for `fill`: the clear is what React can miss, which shows up as a field that appends instead of replacing. The failure is silent and reads like a flaky selector.
 2. **Coherence.** A page that reads `event.isTrusted` sees a contradiction *within a single user action*, which is a sharper signal than uniformly untrusted input would be.
 
 **Fix:** prefer real CDP input everywhere it works; keep the JS path as an explicit, logged fallback rather than a silent fast path; and assert the expected event sequence in tests. The handbook's *Native behavior beats broad spoofing* is the general form of this.
@@ -225,7 +225,11 @@ Treat unexplained lower-tier failure as a **stop-and-log**, not an automatic pro
 
 **A 403 that is not a bot control.** Geo-restriction, expired credentials, and genuinely missing authorization all return 403, and only some are bot controls. Do not build a classifier that tries to tell them apart in order to decide whether to keep going. Default 403 to `STOP` and let the per-origin policy carve out the known-benign cases explicitly. A conservative default that occasionally halts a legitimate job is recoverable; a permissive default that occasionally evades enforcement is not.
 
-The general principle: **when the trigger is ambiguous, the cascade must not promote.** Ambiguity resolving toward "try harder" is the failure mode, and it is a failure mode that produces no error message and no log line unless you build one.
+**Enforcement disguised as a transient error.** The table treats timeouts, connection resets, and transport errors as retryable, which is correct in general and exploitable in particular: a bot control that drops connections or serves a 503 is indistinguishable from a flaky network at the single-request level. The distinguishing feature is not the individual failure but its *distribution* — enforcement concentrates on one origin while the rest of the fleet is healthy. Borrow the handbook's circuit breaker: track transient-failure rate per origin, and when it exceeds a threshold, escalate to the stop path rather than continuing to retry. A retry budget that is per-request rather than per-origin will happily grind against an origin that has already decided to refuse you.
+
+**Learned tier preferences are the known-detector table, rediscovered.** The obvious optimization once a cascade exists is to remember which tier worked for which origin and start there next time. That is a pure win when the reason was capability. When the reason was detection, a cache of "origin X needs tier 3" is exactly the pre-classification §4.4 rejects — assembled by the system rather than by a person, which makes it harder to notice and no different in effect. If you build tier memoization, key it on the *recorded reason* for the promotion and refuse to memoize anything whose reason was unexplained or enforcement-adjacent. This is the strongest argument for logging a structured reason on every promotion: without one, you cannot implement this rule, and the cache silently becomes the thing you said you would not build.
+
+The general principle: **when the trigger is ambiguous, the cascade must not promote.** Ambiguity resolving toward "try harder" is the failure mode, and it produces no error message and no log line unless you build one.
 
 ### 4.4 The "known detectors" idea
 
@@ -315,6 +319,4 @@ Items 1-5 are worth doing regardless of any position on detection. That is the t
 
 ## Closing
 
-The handbook's closing rule applies here without modification: the durable advantage is not a bigger pile of evasions. For agent-browser specifically it is a coherent identity model, native protocol behavior, a cascade that promotes on capability and stops on enforcement, and a harness that catches contradictions before a site does.
-
-The most valuable property agent-browser has right now is that it is honest by default. Whatever gets built on top, keep the stop-state — it is much easier to hold a boundary that was never crossed than to reintroduce one after the retry loop already works.
+The most valuable property agent-browser has right now is that it is honest by default — `--remote-debugging-port=0` arrived at the cooperative behavior by accident, and the four findings in §3 are all fixable without giving that up. Whatever gets built on top, keep the stop-state. It is much easier to hold a boundary that was never crossed than to reintroduce one after the retry loop already works.
