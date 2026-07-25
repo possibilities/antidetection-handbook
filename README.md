@@ -125,7 +125,7 @@ Do not collapse these into one “stealth” feature:
 | Objective | Typical strategy | Population requirement | Primary risk |
 |---|---|---|---|
 | **Privacy anti-fingerprinting** | Normalize, partition, reduce precision, or farble values to reduce tracking. | Usually depends on many users sharing browser behavior or site-scoped secrets. | Compatibility breakage or becoming a small recognizable privacy cohort. |
-| **Automation fidelity** | Use native browser behavior, remove accidental test-framework anomalies, and model realistic authorized environments. | Needs representative test cohorts, not impersonation. | False confidence from narrow checkers. |
+| **Automation fidelity** | Use native browser behavior, remove only owner-authorized test-framework anomalies, and model realistic authorized environments. | Needs representative test cohorts, not impersonation. | False confidence from narrow checkers. |
 | **Synthetic identity / “antidetect browser”** | Rewrite many surfaces to present a different persona. | Must keep every dependent layer coherent; marketing often ignores this. | Security lag, impossible combinations, terms/access-control abuse. |
 
 Tor/Firefox/Brave privacy defenses are not automation cloaks. Likewise, a patched automation framework is not a privacy browser.
@@ -138,7 +138,7 @@ If `X` and `Y` are correlated, their information is not additive:
 H(X, Y) = H(X) + H(Y | X)
 ```
 
-A common screen size may add little after device class is known. A one-bit property can still identify someone if only one member of the observed population has it. Randomizing a value can **increase** uniqueness when the result is rare. Hashing a fingerprint changes representation, not information content or legal linkability.
+A common screen size may add little after device class is known. A one-bit property can still identify someone if only one member of the observed population has it. Randomizing a value can **increase** uniqueness when the result is rare. Hashing alone generally does not remove practical linkability or make a fingerprint anonymous; truncation/collisions may discard information, while keying and scope determine where linkage remains possible.
 
 Longitudinal systems do not need exact equality. Research such as [FP-STALKER](https://inria.hal.science/hal-01652021v1) links fingerprints as components drift; [Gummy Browsers](https://arxiv.org/pdf/2110.10129v1.pdf) shows that browser fingerprints can be cloned, so a matching fingerprint is not authentication.
 
@@ -556,7 +556,7 @@ Origin sees: generic client's TLS/HTTP, whatever browser headers were copied
 
 A browser request is not a header dictionary. Before headers, TLS exposes cipher suites, extensions, groups, signatures, GREASE, SNI and ALPN. HTTP/2 adds ordered SETTINGS, flow control, priority and HPACK. HTTP/3 adds QUIC parameters, connection IDs, H3 SETTINGS and QPACK. Fetch Metadata and Client Hints encode browser state and request context. Connection pools encode history.
 
-If browser wire fidelity matters, use a blind `CONNECT` tunnel or full network tunnel. If interception is the test objective, label the origin-facing identity as the gateway’s and never claim the capture represents the browser.
+If browser wire fidelity matters, use a blind `CONNECT` tunnel for browser TLS and H1/H2, or a full network tunnel that carries the required transports. Traditional `CONNECT` is a TCP tunnel and cannot preserve QUIC/H3; that requires explicitly supported UDP tunneling such as CONNECT-UDP/MASQUE or another UDP-capable path. If interception is the test objective, label the origin-facing identity as the gateway’s and never claim the capture represents the browser.
 
 ### Coherence matrix
 
@@ -565,7 +565,7 @@ If browser wire fidelity matters, use a blind `CONNECT` tunnel or full network t
 | IP/ASN/reputation | Stable, authorized egress; IPv4 and IPv6 covered. | Cloud, VPN, enterprise and privacy exits are legitimate but may carry different reputation. |
 | IP geography | Broadly plausible with intended locale/timezone. | City precision is unreliable; travel, mobile, anycast and corporate egress are normal. |
 | DNS | Resolve at/near the intended egress; document DoH/bootstrap. | Local DNS or direct DoH can select a CDN far from the exit and leak the client network. |
-| HTTPS proxy | Blind `CONNECT` when preserving browser TLS/H2/H3; secure client-to-proxy credentials. | TLS interception replaces the origin-facing browser stack. |
+| HTTPS proxy | Blind `CONNECT` preserves browser TLS and H1/H2; secure client-to-proxy credentials. | Traditional `CONNECT` is TCP-only. H3 needs explicit UDP tunneling/browser support or a full network tunnel; TLS interception replaces the origin-facing browser stack. |
 | SOCKS | Proxy-side target resolution; explicitly test auth and UDP limitations. | Chromium’s SOCKS5 client proxies only TCP-based URL requests, always resolves target names proxy-side, supports no authentication methods (although SOCKS5 defines some), and does not carry QUIC/WebRTC UDP. |
 | WebRTC | ICE candidates use the permitted path; relay-only TURN or non-proxied-UDP policy when required. | mDNS hides local numeric host candidates but does not stop direct public STUN candidates. |
 | TLS/JA3/JA4 | Native browser emits ClientHello; ALPN agrees with subsequent protocol. | JA3 is brittle; JA4 groups more broadly; neither uniquely identifies a device. |
@@ -574,7 +574,7 @@ If browser wire fidelity matters, use a blind `CONNECT` tunnel or full network t
 | Headers | Browser generates `Host`, `Sec-Fetch-*`, `Sec-CH-*`, cookies and context metadata. | Manually copied values can describe a navigation/platform that never happened. |
 | Reuse/state | One browser context keeps normal H2/H3 pools, TLS resumption, Alt-Svc, DNS and cookies on stable egress. | Fresh generic connections per resource or egress changes mid-session destroy these relationships. |
 
-Primary protocol references: [Chromium proxy behavior](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md), [TLS 1.3](https://www.rfc-editor.org/rfc/rfc8446.html), [ALPN](https://www.rfc-editor.org/rfc/rfc7301.html), [GREASE](https://www.rfc-editor.org/rfc/rfc8701.html), [HTTP/2](https://www.rfc-editor.org/rfc/rfc9113.html), [QUIC](https://www.rfc-editor.org/rfc/rfc9000.html), and [HTTP/3](https://www.rfc-editor.org/rfc/rfc9114.html).
+Primary protocol references: [Chromium proxy behavior](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md), [TLS 1.3](https://www.rfc-editor.org/rfc/rfc8446.html), [ALPN](https://www.rfc-editor.org/rfc/rfc7301.html), [GREASE](https://www.rfc-editor.org/rfc/rfc8701.html), [HTTP/2](https://www.rfc-editor.org/rfc/rfc9113.html), [QUIC](https://www.rfc-editor.org/rfc/rfc9000.html), [HTTP/3](https://www.rfc-editor.org/rfc/rfc9114.html), and [CONNECT-UDP](https://www.rfc-editor.org/rfc/rfc9298.html).
 
 ### Safe topology patterns
 
@@ -779,6 +779,14 @@ The manifest is an assertion about a real environment, not a bag of spoof values
   "id": "qa-us-west-chrome-linux-001",
   "authority": {
     "purpose": "checkout regression on owned staging",
+    "approvalRef": "authz://owned-staging/change-1234",
+    "authorizedMethods": [
+      "playwright",
+      "truthful-webdriver",
+      "native-browser-transport",
+      "qa-input-variation"
+    ],
+    "approvedPatchDigests": [],
     "allowedOrigins": ["https://shop.staging.example"],
     "expiresAt": "2026-08-01T00:00:00Z",
     "maxOriginConcurrency": 2
@@ -849,7 +857,8 @@ profile identity != account lease identity
 egress changed during a continuity session
 proxy mode without IPv6/DNS/WebRTC policy
 origin not in authorization registry
-authorization expired
+requested control/patch/network/input method not explicitly authorized
+authorization missing, invalid, or expired
 mutation without idempotency/confirmation policy
 ```
 
@@ -866,11 +875,16 @@ This baseline intentionally does **not** override UA, Client Hints, platform, We
 ```ts
 import { chromium, type BrowserContext } from 'playwright';
 import fs from 'node:fs/promises';
+import path from 'node:path';
+
+const PROFILE_ROOT = '/profiles'; // pre-created, trusted, and not workload-writable
 
 interface RuntimeIdentity {
   executablePath: string; // verified, pinned Chrome for Testing binary
   profileDir: string;
+  authorizedMethods: ReadonlySet<string>;
   allowedOrigins: string[];
+  geolocationOrigins?: string[];
   locale: string;
   timezoneId: string;
   viewport: { width: number; height: number };
@@ -884,10 +898,51 @@ interface RuntimeIdentity {
   geolocation?: { latitude: number; longitude: number; accuracy: number };
 }
 
-export async function launch(identity: RuntimeIdentity): Promise<BrowserContext> {
-  await fs.mkdir(identity.profileDir, { recursive: true, mode: 0o700 });
+function requireMethod(identity: RuntimeIdentity, method: string) {
+  if (!identity.authorizedMethods.has(method))
+    throw new Error(`automation method not authorized: ${method}`);
+}
 
-  const context = await chromium.launchPersistentContext(identity.profileDir, {
+async function prepareProfileDir(profileDir: string): Promise<string> {
+  const trustedRoot = await fs.realpath(PROFILE_ROOT);
+  const candidate = path.resolve(profileDir);
+  if (path.dirname(candidate) !== trustedRoot)
+    throw new Error('profile must be one direct child of the trusted profile root');
+
+  try {
+    const existing = await fs.lstat(candidate);
+    if (!existing.isDirectory() || existing.isSymbolicLink())
+      throw new Error('profile path is not a real directory');
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') throw error;
+    await fs.mkdir(candidate, { recursive: false, mode: 0o700 });
+  }
+
+  const resolved = await fs.realpath(candidate);
+  if (path.dirname(resolved) !== trustedRoot)
+    throw new Error('profile escapes the trusted profile root');
+
+  const info = await fs.stat(resolved);
+  if (typeof process.getuid === 'function' && info.uid !== process.getuid())
+    throw new Error('profile owner does not match runtime user');
+  await fs.chmod(resolved, 0o700); // mkdir mode does not repair an existing directory
+  if (((await fs.stat(resolved)).mode & 0o077) !== 0)
+    throw new Error('profile permissions are not private');
+  return resolved;
+}
+
+export async function launch(identity: RuntimeIdentity): Promise<BrowserContext> {
+  requireMethod(identity, 'playwright');
+  requireMethod(identity, 'native-browser-transport');
+  if (identity.geolocation) requireMethod(identity, 'geolocation-emulation');
+
+  const allowedOrigins = new Set(identity.allowedOrigins);
+  const geolocationOrigins = identity.geolocationOrigins ?? [];
+  if (geolocationOrigins.some(origin => !allowedOrigins.has(origin)))
+    throw new Error('geolocation origin is not in the navigation allowlist');
+
+  const profileDir = await prepareProfileDir(identity.profileDir);
+  const context = await chromium.launchPersistentContext(profileDir, {
     executablePath: identity.executablePath,
     headless: false,
     locale: identity.locale,
@@ -901,7 +956,7 @@ export async function launch(identity: RuntimeIdentity): Promise<BrowserContext>
   });
 
   if (identity.geolocation) {
-    for (const origin of identity.allowedOrigins)
+    for (const origin of geolocationOrigins)
       await context.grantPermissions(['geolocation'], { origin });
   }
 
@@ -914,6 +969,7 @@ Important limits:
 - `connectOverCDP()` attaches to a browser whose process, default context, profile, proxy and initial targets already exist. Configure identity at browser launch, not after attachment.
 - Playwright emulation changes supported browser-visible behavior; it does not turn Linux into Windows or SwiftShader into a physical GPU.
 - Browser locale controls commonly align `navigator.language` and `Accept-Language`, but always measure the version in use.
+- The profile helper assumes a trusted parent plus an externally enforced exclusive lease; use OS-level containment to prevent path-replacement races.
 - Keep the control endpoint on loopback or behind authenticated, authorized transport.
 
 ### Authorization assertion and terminal denial state
@@ -926,23 +982,43 @@ type Outcome =
   | { kind: 'failed'; reason: string };
 
 function assertAuthorized(url: URL, allowedOrigins: ReadonlySet<string>, expiresAt: Date) {
-  if (Date.now() >= expiresAt.getTime()) throw new Error('authorization expired');
+  const expiry = expiresAt.getTime();
+  if (!Number.isFinite(expiry) || Date.now() >= expiry)
+    throw new Error('authorization missing, invalid, or expired');
   if (!allowedOrigins.has(url.origin)) throw new Error(`origin not authorized: ${url.origin}`);
 }
 
-async function classifyResponse(response: Response): Promise<Outcome> {
+async function classifyResponse(
+  response: globalThis.Response,
+  latestRetryAt: Date, // min(operation deadline, session TTL, authorization expiry)
+): Promise<Outcome> {
   if (response.status === 401 || response.status === 403)
     return { kind: 'stopped', reason: `authorization/access response ${response.status}` };
 
   if (response.status === 429) {
-    const raw = response.headers.get('retry-after')?.trim();
     const now = Date.now();
-    const parsed = raw && /^\d+$/.test(raw)
-      ? now + Number(raw) * 1000
-      : raw ? Date.parse(raw) : Number.NaN;
-    const at = Number.isFinite(parsed)
-      ? new Date(Math.max(now, parsed))
-      : new Date(now + 60_000);
+    const latest = latestRetryAt.getTime();
+    if (!Number.isFinite(latest) || latest <= now)
+      return { kind: 'failed', reason: 'retry deadline is invalid or expired' };
+
+    const raw = response.headers.get('retry-after')?.trim();
+    let requestedAt = now + 60_000;
+    if (raw) {
+      if (/^\d+$/.test(raw)) {
+        const seconds = Number(raw);
+        requestedAt = Number.isSafeInteger(seconds) ? now + seconds * 1000 : Number.NaN;
+      } else {
+        requestedAt = Date.parse(raw);
+      }
+    }
+
+    const policyLatest = Math.min(latest, now + 15 * 60_000);
+    if (!Number.isFinite(requestedAt) || requestedAt > policyLatest)
+      return { kind: 'failed', reason: 'Retry-After exceeds the current authorized deadline or policy' };
+
+    const at = new Date(Math.max(now, requestedAt));
+    if (!Number.isFinite(at.getTime()))
+      return { kind: 'failed', reason: 'Retry-After is outside the supported date range' };
     return { kind: 'retry_later', at };
   }
 
@@ -952,7 +1028,7 @@ async function classifyResponse(response: Response): Promise<Outcome> {
 }
 ```
 
-These helpers are defense in depth, not a navigation guard: enforce the origin allowlist independently at the browser routing layer and a fail-closed network boundary, including redirects, popups, frames, workers, service workers, and browser-initiated traffic. The example intentionally stops on `401`; an expressly authorized reauthentication workflow should start separately rather than turning the failed request into an automatic retry. A site-specific challenge detector must return `stopped`; it must not hand a third-party challenge to an operator, select a new proxy/profile, or retry. Owned applications should use authorized test hooks or test keys instead.
+These helpers are defense in depth, not a navigation guard: enforce the origin allowlist independently at the browser routing layer and a fail-closed network boundary, including redirects, popups, frames, workers, service workers, and browser-initiated traffic. `globalThis.Response` above means a Fetch/DOM response; adapt Playwright’s method-based `Response` explicitly rather than copying the function unchanged. The example intentionally stops on `401`; an expressly authorized reauthentication workflow should start separately rather than turning the failed request into an automatic retry. A site-specific challenge detector must return `stopped`; it must not hand a third-party challenge to an operator, select a new proxy/profile, or retry. Owned applications should use authorized test hooks or test keys instead.
 
 ### Bounded, replayable UI motion for QA
 
@@ -1149,7 +1225,8 @@ A self-hostable starting point is [TrackMe](https://github.com/pagpeter/TrackMe)
 Authorized packet capture example:
 
 ```sh
-sudo tcpdump -i lo0 -s0 -w run.pcap 'tcp port 443 or udp port 443'
+sudo tcpdump -i "${CAPTURE_INTERFACE:?set the interface carrying the test traffic}" \
+  -s0 -w run.pcap 'tcp port 443 or udp port 443'
 
 # If the FoxIO JA4 Wireshark plugin is installed:
 tshark -r run.pcap \
@@ -1158,7 +1235,7 @@ tshark -r run.pcap \
   -e tcp.stream -e ip.src -e ip.dst -e tls.handshake.ja4
 ```
 
-Packet captures contain sensitive traffic metadata and sometimes payload depending on the environment. Encrypt, restrict and delete them promptly.
+Choose the interface from the actual topology: loopback is correct only when the tested traffic traverses it; ordinary remote traffic usually requires the relevant physical, tunnel, bridge, or namespace interface. Packet captures contain sensitive traffic metadata and sometimes payload depending on the environment. Encrypt, restrict and delete them promptly.
 
 ### Cross-context test
 
@@ -1178,6 +1255,10 @@ const shared = () => {
 };
 
 test('shared system surfaces agree across contexts', async ({ page, context }) => {
+  test.skip(
+    context.browser()?.browserType().name() !== 'chromium',
+    'Playwright service-worker inspection is Chromium-only',
+  );
   await page.goto(`${process.env.LAB_ORIGIN}/contexts`);
 
   const observations: Record<string, ReturnType<typeof shared>> = {
@@ -1191,13 +1272,23 @@ test('shared system surfaces agree across contexts', async ({ page, context }) =
   await page.evaluate(() => new Worker('/fp-worker.js'));
   observations.worker = await (await workerCreated).evaluate(shared);
 
-  await page.evaluate(async () => {
-    const registrations = await navigator.serviceWorker.getRegistrations();
-    await Promise.all(registrations.map(registration => registration.unregister()));
-  });
-  const swCreated = context.waitForEvent('serviceworker', { timeout: 10_000 });
-  await page.evaluate(() => navigator.serviceWorker.register('/fp-sw.js'));
-  observations.serviceWorker = await (await swCreated).evaluate(shared);
+  const serviceWorkerURL = new URL('/fp-sw.js', page.url()).href;
+  const serviceWorkerScope = new URL('/contexts/', page.url()).href;
+  let serviceWorker = context.serviceWorkers().find(
+    worker => worker.url() === serviceWorkerURL,
+  );
+  if (!serviceWorker) {
+    const swCreated = context.waitForEvent('serviceworker', {
+      predicate: worker => worker.url() === serviceWorkerURL,
+      timeout: 10_000,
+    });
+    await page.evaluate(async ({ scriptURL, scope }) => {
+      const registration = await navigator.serviceWorker.register(scriptURL, { scope });
+      registration.active?.postMessage('wake'); // start a persisted but dormant worker
+    }, { scriptURL: serviceWorkerURL, scope: serviceWorkerScope });
+    serviceWorker = await swCreated;
+  }
+  observations.serviceWorker = await serviceWorker.evaluate(shared);
 
   const keys = Object.keys(observations.page) as Array<keyof ReturnType<typeof shared>>;
   for (const key of keys) {
@@ -1207,7 +1298,7 @@ test('shared system surfaces agree across contexts', async ({ page, context }) =
 });
 ```
 
-The shared probe deliberately contains only fields exposed across the tested realms; keep page-only surfaces such as `webdriver`, permissions, screen, and DOM APIs in context-specific probes. In production code, type the observation map explicitly and normalize unsupported fields. Also assert cross-layer relationships: HTTP/JS language, UA/UA-CH/browser build, screen/DPR arithmetic, GPU cohort, protocol signature, and stable network lease.
+The shared probe deliberately contains only fields exposed across the tested realms; keep page-only surfaces such as `webdriver`, permissions, screen, and DOM APIs in context-specific probes. It matches the complete worker URL, reuses a live target, and otherwise arms the event before registration and sends a benign message to start a persisted but dormant active worker. Run the probe in a fresh disposable context if the target engine/lifecycle cannot expose such a worker—`unregister()` does not synchronously terminate an old target—and explicitly skip unsupported engines. In production code, type the observation map explicitly and normalize unsupported fields. Also assert cross-layer relationships: HTTP/JS language, UA/UA-CH/browser build, screen/DPR arithmetic, GPU cohort, protocol signature, and stable network lease.
 
 ### Metrics
 
@@ -1222,7 +1313,7 @@ The shared probe deliberately contains only fields exposed across the tested rea
 - harness flake rate;
 - startup/navigation latency and crash rate.
 
-Report confidence intervals for proportions. Suggested initial gates—not universal constants:
+Report confidence intervals for proportions, predeclare the interval, and define the independent experimental unit; use cluster-aware analysis when runs share a profile, host, account, or egress. Suggested initial gates—not universal constants:
 
 | Class | Initial gate |
 |---|---|
@@ -1231,7 +1322,7 @@ Report confidence intervals for proportions. Suggested initial gates—not unive
 | Hard invariants | Zero violations. |
 | Same pinned browser + network path | Zero unexpected deterministic protocol drift. |
 | Stable JS components | 20 cold runs with no unexpected drift are a smoke gate, not evidence of 99% population stability. |
-| Flake rate | Upper one-sided 95% confidence bound <1%; with zero failures this requires at least 299 qualified independent observations. |
+| Flake rate | Exact one-sided 95% Clopper–Pearson upper bound <1%; with zero failures this requires at least 299 qualified independent observations. |
 | False positives | Predeclare the interval method and sample size; do not enforce ≤1% or ≤3% bounds from the 20/50-run smoke matrices. |
 | Release | Gate degradation only when concurrent treatment/control samples have adequate power for the declared effect size. |
 
@@ -1271,7 +1362,7 @@ release_id, coarse_cohort_id, test_id, pass_or_fail,
 reason_enum, latency_bucket, checker_availability
 ```
 
-Do not export raw IPs, headers, UA strings, URLs, cookies, fingerprints, canvas/audio/WebGL values, or stable per-browser IDs. Hashing does not make a linkable fingerprint anonymous. Keep raw lab artifacts encrypted, access-controlled and short-lived; export only aggregate findings. See OpenTelemetry’s [sensitive-data guidance](https://opentelemetry.io/docs/security/handling-sensitive-data/).
+Do not export raw IPs, headers, UA strings, URLs, cookies, fingerprints, canvas/audio/WebGL values, or stable per-browser IDs. Do not assume hashing alone makes a fingerprint anonymous when practical linkage remains. Keep raw lab artifacts encrypted, access-controlled and short-lived; export only aggregate findings. See OpenTelemetry’s [sensitive-data guidance](https://opentelemetry.io/docs/security/handling-sensitive-data/).
 
 ---
 
@@ -1287,7 +1378,7 @@ This section is a source audit of the public repository at commit [`3be26fcbcdbe
 | Default scope | [`server/cmd/wrapper/main.go#L93-L97`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/wrapper/main.go#L93-L97) | The default stealth list is applied only for the headless profile and only when `CHROMIUM_FLAGS` is empty. Headful defaults are caller-supplied. |
 | Browser launcher | [`server/cmd/chromium-launcher/main.go#L48-L100`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/chromium-launcher/main.go#L48-L100) | Merges base/runtime flags, uses a persistent `/home/kernel/user-data`, a configurable internal remote-debugging port (default `9223`), and unified `--headless=new` for headless. It also forces `--remote-allow-origins=*`; the CDP endpoint must remain private or behind authenticated, authorized transport. |
 | Version-paired browser/driver | [headful Dockerfile](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headful/Dockerfile#L286-L303), [headless Dockerfile](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headless/image/Dockerfile#L168-L185) | Selects Chrome for Testing `148.0.7778.97` and the same-version ChromeDriver; downloads are not digest-verified here, so this is version pairing rather than a fully reproducible supply chain. |
-| Patchright default for in-image Playwright execution | [`server/runtime/playwright-daemon.ts#L15-L20`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/runtime/playwright-daemon.ts#L15-L20), [`#L90-L105`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/runtime/playwright-daemon.ts#L90-L105) | `/playwright/execute` selects Patchright unless `PLAYWRIGHT_ENGINE=playwright-core`, then attaches over CDP. |
+| In-image Playwright code executor | [`server/runtime/playwright-daemon.ts#L122-L175`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/runtime/playwright-daemon.ts#L122-L175), [`server/cmd/api/api/playwright.go#L39-L69`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/api/api/playwright.go#L39-L69) | `/playwright/execute` selects Patchright unless configured for `playwright-core`, attaches over CDP, then compiles caller-supplied TypeScript and executes it with `AsyncFunction` in the daemon’s Node realm—not a page sandbox. The child inherits the API environment. |
 | Font normalization | [`images/chromium-headful/Dockerfile#L203-L234`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headful/Dockerfile#L203-L234) | Installs a broad Ubuntu-style font set specifically because a minimal container was a reCAPTCHA/fingerprinting signal. |
 | Headless fonts | [`images/chromium-headless/image/Dockerfile#L150-L160`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headless/image/Dockerfile#L150-L160) | Installs a smaller international font subset, so headful/headless font surfaces differ. |
 | Humanized pointer movement | [`server/lib/mousetrajectory/mousetrajectory.go`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/lib/mousetrajectory/mousetrajectory.go), [`server/cmd/api/api/computer.go#L105-L203`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/api/api/computer.go#L105-L203) | Randomized Bézier trajectories, distortion/easing and Gaussian inter-event timing through X11 input. The trajectory code credits Camoufox/HumanCursor. |
@@ -1295,16 +1386,26 @@ This section is a source audit of the public repository at commit [`3be26fcbcdbe
 | Humanized drag | [`server/cmd/api/api/computer.go#L1200-L1288`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/api/api/computer.go#L1200-L1288) | Multi-segment curves, smoothstep velocity and Gaussian delays. |
 | Dynamic flags/policies/extensions | [`server/cmd/api/api/chromium_configure.go#L103-L168`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/api/api/chromium_configure.go#L103-L168), [`#L717-L788`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/api/api/chromium_configure.go#L717-L788), [`server/lib/chromiumflags/chromiumflags.go`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/lib/chromiumflags/chromiumflags.go) | Runtime Chromium flags plus managed policy and extension installation, applied on the stop/start configuration path. |
 | Browser policy defaults | [`shared/chromium-policies/managed/policy.json`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/chromium-policies/managed/policy.json) | Disables password/address/card autofill, notifications and geolocation by default; configures search and extension policy. |
-| Forward-proxy substrate | [`shared/envoy/bootstrap.yaml`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bootstrap.yaml), [`shared/envoy/bake-certs.sh#L49-L60`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bake-certs.sh#L49-L60) | Envoy is configured by xDS; the image trusts a localhost proxy CA. The public script explicitly says Bright Data certificates are supplied by `install-proxy.sh` in private images. |
+| xDS control path | [`shared/envoy/bootstrap.yaml#L12-L72`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bootstrap.yaml#L12-L72) | ADS sends the instance bearer JWT as gRPC metadata. The public upstream TLS context sets SNI but has no certificate-validation context. |
+| Image-baked proxy CA | [`shared/envoy/bake-certs.sh#L29-L47`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bake-certs.sh#L29-L47) | The image build generates and retains a private CA key, then trusts its certificate in the system and root/kernel NSS stores. The CA certificate’s localhost SAN does not constrain names on leaf certificates it signs. |
+| Private proxy additions | [`shared/envoy/bake-certs.sh#L49-L60`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bake-certs.sh#L49-L60) | The public script says Bright Data certificates are supplied by `install-proxy.sh` in private images, so production proxy identity remains partly private. |
 | Profile/session persistence | [`server/cmd/chromium-launcher/main.go#L88-L99`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/chromium-launcher/main.go#L88-L99) | One persistent user-data directory supports cookies and continuity across browser restarts/snapshots. |
 
 Relevant intent is also visible in snapshot ancestry: `cba3f77` added fonts after CreepJS showed only three; `a0cfe0a` added smooth typing; `c058cb0` added Gaussian mouse delays; `e35232f` paired Chrome and ChromeDriver.
 
-### Important limits
+### Security-critical public-source findings
+
+These are facts about the pinned public image source, not claims about unobserved hosted edge controls or private image overrides. Treat production impact as conditional, but do not assume a private layer repairs them.
+
+1. **The public xDS TLS client does not authenticate its server.** [`bootstrap.yaml#L23-L25`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bootstrap.yaml#L23-L25) sends a bearer JWT, while [`#L57-L63`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bootstrap.yaml#L57-L63) supplies only SNI. Envoy 1.32 documents that [server-certificate verification is disabled by default](https://www.envoyproxy.io/docs/envoy/v1.32.11/api-v3/extensions/transport_sockets/tls/v3/tls.proto.html); SNI is not validation. Configure a trusted CA plus exact DNS SAN verification—or an equivalent verified SDS context, preferably mTLS—before sending the token.
+2. **`/playwright/execute` is container-level code execution.** Caller code runs in the daemon’s Node global realm; the [API launches it with the full environment](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/api/api/playwright.go#L62-L65), and the public [headful final stage](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headful/Dockerfile#L383-L391), [headless final stage](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headless/image/Dockerfile#L229-L279), and [API supervisor entry](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headful/supervisor/services/kernel-images-api.conf) do not select a non-root API user. The abort path races the promise but does not terminate underlying asynchronous code, and synchronous code can block the timer. Outer authorization is necessary but not a sandbox: use a killable, resource-limited, unprivileged per-request process/container with a sanitized environment and no profile, CA-key, or control-plane-secret access.
+3. **The proxy CA private key is shared in the image trust domain and is not hostname-constrained.** The [public build script](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bake-certs.sh#L29-L47) under Ubuntu/OpenSSL produces a `CA:TRUE` certificate; its localhost SAN identifies the CA certificate but is not an [RFC 5280 name constraint](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.2.1.10) on issued leaves. Generate isolated per-instance credentials outside image layers, keep signing keys inaccessible to workloads, rotate them, and pin or otherwise constrain the intended localhost endpoint.
+
+### Other important limits
 
 1. **Headless and headful are asymmetric.** The built-in stealth list is headless-only. Local headful `run-docker.sh` supplies its own flags, but production callers control headful defaults.
 2. **Any nonempty `CHROMIUM_FLAGS` replaces the headless default list.** Runtime flag merging occurs later; callers can accidentally discard the baseline.
-3. **Patchright protects only the in-image Playwright daemon path.** An external Playwright/Puppeteer/Selenium client connecting to the public CDP/ChromeDriver proxy uses its own framework behavior.
+3. **Patchright’s scope is narrow.** It changes the in-image daemon’s browser-control behavior; it does not sandbox caller Node code. An external Playwright/Puppeteer/Selenium client connecting to the public CDP/ChromeDriver proxy uses its own framework behavior.
 4. **Patchright and Playwright packages are installed without explicit npm versions** in the Dockerfiles, while Chrome is pinned. Rebuilding at different times can change the control layer unless the image build resolves from an external lock/cache.
 5. **The repo uses ordinary Chrome for Testing, not a source-patched fingerprint browser.** There is no public C++ engine patch for navigator, canvas, WebGL, audio, worker realms, UA-CH or TLS.
 6. **No public identity compiler is visible.** There is no per-profile manifest constraining UA/platform/locale/timezone/geolocation/screen/GPU/font/network relationships.
@@ -1315,10 +1416,12 @@ Relevant intent is also visible in snapshot ancestry: `cba3f77` added fonts afte
 11. **The managed policy denies geolocation by default.** Regional identity alignment would require authorized runtime policy/context configuration.
 12. **`--no-sandbox` appears in the headless default.** That is a container/isolation tradeoff, not an antidetection technique, and should not be copied into less isolated deployments.
 13. **The launcher forces `--remote-allow-origins=*`.** This relaxes the WebSocket origin check; exposing the debugging port is a control-plane vulnerability, not a fingerprint issue. Keep it on a private boundary or front it with authenticated, authorized transport.
+14. **The wrapper attempts a global IPv6 shutdown and ignores failure.** [`server/cmd/wrapper/main.go#L110-L112`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/wrapper/main.go#L110-L112) writes both `all/disable_ipv6` and `default/disable_ipv6` without checking errors. Assert at runtime whether IPv6 is actually disabled and whether the intended IPv4-only policy holds.
+15. **More supply-chain inputs remain mutable.** Public Docker stages use tag-only base images, unversioned apt packages, an Envoy package branch, and `latest` FFmpeg assets. The downloaded FFmpeg archive is checked against a fetched checksum, but both move together. Record immutable base digests, dated repositories, exact package/artifact versions, and independently pinned hashes.
 
 ### Bottom line
 
-The public repo contains several **image/runtime primitives**: real Chrome, same-version browser/driver pairing, headless automation-flag suppression, Patchright for one execution path, a more realistic headful font corpus, persistent state, proxy plumbing, and humanized input APIs. This inventory is not a recommendation to use signal suppression or input simulation against third-party controls. It does **not** publicly implement a complete, cross-layer antidetection product. The missing system is the identity compiler, full network policy, realm-complete browser behavior, cohort regression harness, and operational authorization/profile/account lifecycle described in this handbook.
+The public repo contains several **image/runtime primitives**: real Chrome, same-version browser/driver pairing, headless automation-flag suppression, Patchright for one execution path, a more realistic headful font corpus, persistent state, proxy plumbing, and humanized input APIs. This inventory is not a recommendation to use signal suppression or input simulation against third-party controls. It also exposes the security-sensitive xDS, code-execution, CA-key, debugging-port, and privilege boundaries above; private layers may mitigate them, but the public source cannot establish that. It does **not** publicly implement a complete, cross-layer antidetection product. The missing system is the identity compiler, full network policy, realm-complete browser behavior, cohort regression harness, and operational authorization/profile/account lifecycle described in this handbook.
 
 ---
 
@@ -1355,6 +1458,8 @@ Every production automation job should resolve an immutable authorization record
 
 - owner and approving party;
 - purpose;
+- immutable approval/evidence reference;
+- enumerated authorized methods and capabilities—including control stack, signal suppression, framework/browser patch digests, protocol emulation, and synthetic-input model;
 - exact origins and environments;
 - allowed accounts/actions/data classes;
 - rate/concurrency limits;
@@ -1364,7 +1469,7 @@ Every production automation job should resolve an immutable authorization record
 - start and expiry;
 - emergency stop contact.
 
-If the record is missing, expired, or ambiguous, fail closed.
+If the record is missing, invalid, expired, ambiguous, or does not explicitly authorize a requested method, fail closed. Before launch, compare the requested image, patch digests, launch flags, network mode, permission grants, and input model with this record.
 
 ### Protect the browser control plane
 
@@ -1383,7 +1488,7 @@ CDP/WebDriver can execute code, navigate, inspect network traffic, and access co
 
 - profile directories, `storageState`, cookies and session tokens are secrets;
 - encrypt at rest and in transit;
-- apply mode `0700`, per-job identity and least privilege;
+- confine them under a trusted root, reject symlinks/owner mismatches, explicitly repair and verify mode `0700`, and enforce per-job identity plus least privilege;
 - prohibit repository commits, HAR inclusion and general logs;
 - prevent concurrent profile use;
 - expire and revoke;
@@ -1396,6 +1501,7 @@ CDP/WebDriver can execute code, navigate, inspect network traffic, and access co
 A custom browser has the attack surface of a browser plus a rebasing pipeline. Require:
 
 - signed/reproducible artifacts and checksums;
+- immutable base images, dated package repositories/snapshots, and locked dependency versions;
 - upstream security-release SLA;
 - source diff review;
 - SBOM and dependency pinning;
@@ -1422,7 +1528,8 @@ Guidance is not itself the statute, implementations and national transpositions 
 - avoid logging actual typed content or mouse biometrics;
 - separate security from advertising/analytics purposes;
 - use short retention and documented deletion;
-- do not call a hash anonymous if it remains linkable;
+- do not call a hash anonymous if it remains practically linkable;
+- document the applicable ePrivacy Article 5(3) consent or transmission/strict-necessity analysis separately from the GDPR Article 6 lawful-basis analysis;
 - provide transparency and rights handling where required;
 - perform DPIA/LIA or equivalent review where appropriate.
 
@@ -1475,7 +1582,8 @@ Preserve only the minimum forensic evidence, rotate exposed credentials, notify 
 
 ### Design
 
-- [ ] Written authorization, purpose, allowed origins/actions/accounts and expiry exist.
+- [ ] Written authorization, immutable evidence, approved methods/artifact digests, allowed origins/actions/accounts and expiry exist.
+- [ ] Requested control, patch, network, permission and input methods are machine-checked against that authorization.
 - [ ] Official API/test mode/allowlisting was considered before browser hardening.
 - [ ] A real OS/browser/GPU/display/font/network cohort is selected.
 - [ ] One identity manifest derives all configuration.
@@ -1484,11 +1592,11 @@ Preserve only the minimum forensic evidence, rotate exposed credentials, notify 
 - [ ] Direct egress, IPv6, DNS, QUIC and WebRTC paths are designed explicitly.
 - [ ] Control-plane and profile secrets have a threat model.
 - [ ] Challenge, retry, idempotency, rate and emergency-stop behavior are defined.
-- [ ] Data inventory, lawful basis, retention and deletion are reviewed.
+- [ ] Data inventory, GDPR lawful basis, separate ePrivacy Article 5(3) analysis, retention and deletion are reviewed.
 
 ### Build
 
-- [ ] Browser, driver, framework, packages, OS image and patches are pinned by version/digest.
+- [ ] Browser, driver, framework, packages, OS image, package repository snapshot and patches are pinned by version/digest.
 - [ ] Browser/driver versions match.
 - [ ] Browser runs unprivileged with sandboxing or a documented equivalent isolation boundary.
 - [ ] Fonts/codecs/audio/GPU/display match the cohort.
@@ -1529,7 +1637,7 @@ Preserve only the minimum forensic evidence, rotate exposed credentials, notify 
 An autonomous agent using this handbook should follow these invariants:
 
 ```text
-MUST verify authority before navigation.
+MUST verify authority and requested methods before launch or navigation.
 MUST stay inside allowlisted origins and actions.
 MUST use the assigned identity/profile/account/egress lease.
 MUST preserve identity continuity during a session.
@@ -1547,6 +1655,8 @@ MUST NOT interpret a public checker as authorization or proof of invisibility.
 ---
 
 ## Annotated source library
+
+Live `main`, `tot`, registry, and specification URLs are verification entry points, not frozen evidence. For a reproducible audit, archive resolved commit/schema versions, registry metadata, retrieval dates, and content hashes alongside the research snapshot.
 
 ### Standards and browser semantics
 
@@ -1601,7 +1711,7 @@ MUST NOT interpret a public checker as authorization or proof of invisibility.
 ### Network and protocol
 
 - **[Chromium proxy documentation](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md):** HTTP/HTTPS/SOCKS behavior, DNS, auth, bypass and fallback.
-- **[RFC 9110 — HTTP semantics/CONNECT](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6)** and **[proxy auth](https://www.rfc-editor.org/rfc/rfc9110.html#section-11.7)**.
+- **[RFC 9110 — HTTP semantics/CONNECT](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6)**, **[proxy auth](https://www.rfc-editor.org/rfc/rfc9110.html#section-11.7)**, and **[RFC 9298 — CONNECT-UDP](https://www.rfc-editor.org/rfc/rfc9298.html)**.
 - **[RFC 1928 — SOCKS5](https://www.rfc-editor.org/rfc/rfc1928.html)** and **[RFC 1929 — username/password](https://www.rfc-editor.org/rfc/rfc1929.html)**.
 - **[RFC 8446 — TLS 1.3](https://www.rfc-editor.org/rfc/rfc8446.html)**, **[RFC 7301 — ALPN](https://www.rfc-editor.org/rfc/rfc7301.html)**, and **[RFC 8701 — GREASE](https://www.rfc-editor.org/rfc/rfc8701.html)**.
 - **[JA3](https://engineering.salesforce.com/tls-fingerprinting-with-ja3-and-ja3s-247362855967/)** and **[JA4 specification](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md):** implementation fingerprints and limitations.
@@ -1629,6 +1739,8 @@ MUST NOT interpret a public checker as authorization or proof of invisibility.
 - **[Playwright authentication security](https://playwright.dev/docs/auth):** storage-state credential warning and worker isolation patterns.
 - **[Selenium CAPTCHA testing guidance](https://www.selenium.dev/documentation/test_practices/discouraged/captchas/):** use test hooks/keys rather than automating challenges.
 - **[NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html):** session/authenticator security.
+- **[Envoy 1.32 upstream TLS context](https://www.envoyproxy.io/docs/envoy/v1.32.11/api-v3/extensions/transport_sockets/tls/v3/tls.proto.html):** server-certificate verification is opt-in through a validation context.
+- **[RFC 5280 name constraints](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.2.1.10):** the extension that constrains namespaces certified by a CA; a CA certificate’s own SAN is not equivalent.
 - **[GDPR full text](https://eur-lex.europa.eu/eli/reg/2016/679/oj)** and **[EDPB Article 5(3) guidance](https://www.edpb.europa.eu/documents/guideline/guidelines-22023-on-technical-scope-of-art-53-of-eprivacy-directive_en)**.
 - **[WCAG 2.2](https://www.w3.org/TR/WCAG22/):** accessible interaction and authentication requirements.
 - **[DOJ CFAA charging policy](https://www.justice.gov/jm/jm-9-48000-computer-fraud):** enforcement guidance and good-faith research definition; not statutory authorization.
