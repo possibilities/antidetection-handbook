@@ -6,13 +6,15 @@
 
 The handbook is general. This document answers a narrower question: *what does agent-browser actually look like on the wire and in the page today, and what should be built next?*
 
-Every factual claim here was read out of the source. Where the answer is "this does not exist," it says so.
+Claims cite `path:line`. Where the answer is "this does not exist," it says so — and where I searched for something and found nothing, it says that too, since the two are different.
 
 ---
 
 ## 1. The short version
 
-agent-browser's native backend is **not** trying to hide, and currently could not hide if it wanted to. It launches Chrome with `--remote-debugging-port=0`, which sets Chromium's `AutomationControlled` runtime feature, which makes `navigator.webdriver` return `true`. Add `--headless=new`, SwiftShader software rendering, `Runtime.enable`, and a container font corpus, and any site that looks at all is going to see an automated Linux container.
+agent-browser's native backend is **not** trying to hide, and currently could not hide if it wanted to. It launches Chrome with `--remote-debugging-port=0`, which sets Chromium's `AutomationControlled` runtime feature, which makes `navigator.webdriver` return `true`. Add `--headless=new`, `Runtime.enable`, and a fresh throwaway profile on every launch, and any site that looks at all sees automation.
+
+On Linux and in CI the picture is starker still — software rendering and a container font corpus put a recognizable cohort on top of the automation signals. On a developer's macOS or Windows machine it is milder: the SwiftShader routing is Linux-gated (`cfg!(target_os = "linux")` at `chrome.rs:418`), so those hosts keep hardware Metal/D3D backends and the real OS font corpus.
 
 That is a defensible default. What complicates the picture is that the *defaults* are honest while the *configuration surface* is not: `--args`, `--init-script`, and `--user-agent` already let anyone suppress those signals, the help text uses `--disable-blink-features=AutomationControlled` as its worked example, and the plugin protocol ships a `navigator.webdriver` shim as a test vector (§2.1). Nothing gates any of it.
 
@@ -22,7 +24,7 @@ So the available work splits into three piles.
 2. **Coherence bugs worth fixing on their own merits.** Mixed input provenance (§3.1), identifying page globals (§3.2), no identity manifest (§3.3), and a UA override that changes the string but not the Client Hints (§3.4). All four are defects regardless of detection; §3.4 currently leaves a client *worse off* than not using the flag.
 3. **Suppressing truthful automation signals.** Requires the site owner's express permission per the handbook's own rules. Because this is already reachable, the work here is adding a gate and retiring the help-text recommendation — not building a feature (§5).
 
-The cascade the project wants is a good idea, but it has to select on **capability**, not on **enforcement**. §4 is about that distinction, and it is the one place where the stated goal conflicts with the handbook.
+The cascade the project wants is a good idea, but it has to select on **capability**, not on **enforcement**. §4 works through that distinction and the cases where it genuinely blurs.
 
 ---
 
@@ -36,8 +38,9 @@ The cascade the project wants is a good idea, but it has to select on **capabili
 |---|---|---|
 | `--remote-debugging-port=0` | `chrome.rs:398` | **Sets `AutomationControlled`.** `navigator.webdriver === true`. |
 | `--headless=new` | `chrome.rs:444` | Also sets `AutomationControlled`; no platform windows; skipped when extensions are loaded. |
-| `--use-angle=vulkan`, `--use-vulkan=swiftshader`, `--use-webgpu-adapter=swiftshader`, `--enable-unsafe-swiftshader` | `chrome.rs:424-426, 456` | Software rendering. WebGL/WebGPU report SwiftShader. |
-| `--user-data-dir=…` | `chrome.rs:470, 477` | Profile persistence is supported and configurable. |
+| `--use-angle=vulkan`, `--use-vulkan=swiftshader`, `--use-webgpu-adapter=swiftshader` | `chrome.rs:424-426` | Forces software rendering — but only under `options.webgpu && cfg!(target_os = "linux")`. macOS and Windows keep hardware Metal/D3D. |
+| `--enable-unsafe-swiftshader` | `chrome.rs:456` | *Permissive, not forcing.* Allows the software fallback so WebGL doesn't hard-fail where drivers are absent (`chrome.rs:452-455`). On a host with a working GPU it changes nothing observable. |
+| `--user-data-dir=…` | `chrome.rs:470, 477` | Persistence when `--profile` is given. **Absent it, every launch mints a fresh `agent-browser-chrome-<uuid>` temp profile** (`chrome.rs:473-478`) — see below. |
 | `--proxy-server=…`, `--proxy-bypass-list=…` | `chrome.rs:460, 464` | Chromium-native proxying, so browser TLS is preserved through a `CONNECT` tunnel. |
 | `--ignore-certificate-errors` | `chrome.rs:482` | Conditional, but a real risk if it is ever on by default. |
 
@@ -59,6 +62,8 @@ That is `plugins.rs:1272` — the handbook's canonical anti-pattern, shipped as 
 
 This matters for §5. Suppression is not hypothetical future work requiring a design decision; it is **reachable today through documented flags, with no authorization gate anywhere in the path**. The engineering question is not whether to build it but whether to put a gate in front of what already exists.
 
+**The default profile may be the loudest signal in the whole system, and it is not a flag anyone chose.** Without `--profile`, `chrome.rs:473-478` creates `agent-browser-chrome-<uuid>` in the temp directory on every launch. Each session therefore presents a browser with no cookies, no history, no site engagement, no permission decisions, and a first-run timestamp seconds old. The handbook's *state* layer — profile continuity, cookies, caches, service workers — is empty by construction, and a perpetually-brand-new browser is a stronger and more durable signal than any of the JavaScript artifacts in §3. Persistent profiles are supported; they are simply not the default.
+
 The `--remote-debugging-port=0` choice deserves emphasis because it is easy to misread as incidental. Chromium special-cases it deliberately: port `0` is the ephemeral port ChromeDriver uses, so it counts as automation, whereas a fixed port is assumed to be a developer attaching a debugger and leaves the feature unset. The handbook covers this in *Automation signals and control stacks*. agent-browser therefore reports its automation status truthfully by default — the cooperative behavior, arrived at as a side effect.
 
 **Protocol surface.** `Runtime.enable`, `Page.enable`, and `Network.enable` are issued on session setup (`browser.rs:657-708`, `actions.rs:2754-2760`, `state.rs:164-167`). `Runtime.enable` is the classic CDP tell. The V8 changes of May 2025 killed the popular `Error.stack` side-effect detector, but execution-context disclosure remains observable, and it is a hypothesis to re-measure per Chrome release rather than a settled fact.
@@ -69,7 +74,7 @@ The `--remote-debugging-port=0` choice deserves emphasis because it is easy to m
 
 `cli/src/native/cdp/lightpanda.rs` targets Lightpanda, which is not Chromium. It speaks enough CDP to drive, but it is a different engine with a different JavaScript runtime, no Blink rendering, and no Chrome TLS stack.
 
-For detection purposes this is the **least** disguisable backend, and that is fine — it is a speed/cost play for content extraction where nobody is asking whether you are a browser. Treat it as a separate cohort with its own expectations rather than as a Chrome substitute. Do not let a cascade silently promote work from Lightpanda to Chrome and call the results comparable; they are different measurement conditions.
+For detection purposes this is the **least** disguisable backend, and that is fine — it is a speed/cost play for content extraction where nobody is asking whether you are a browser. Treat it as a separate cohort with its own expectations rather than as a Chrome substitute. §4.1 promotes from here to Chrome as tier 0 → 1, which is the right behavior; the caveat is on the *results*, not the promotion. Output gathered under Lightpanda and output gathered under Chrome are different measurement conditions, so record which tier produced a given result rather than treating the pair as interchangeable.
 
 ### 2.3 WebDriver backend
 
@@ -89,6 +94,20 @@ Practically: when using a remote provider, agent-browser is a **client of someon
 
 ---
 
+### 2.5 `read` — the backend that isn't a browser
+
+`agent-browser read` does not drive a browser at all. `cli/src/read.rs` fetches over `reqwest` with `rustls-tls-webpki-roots` (`cli/Cargo.toml:25`) and sends a self-describing User-Agent:
+
+```rust
+const USER_AGENT_VALUE: &str = concat!("agent-browser/", env!("CARGO_PKG_VERSION"), " read");
+```
+
+That is `read.rs:13`, sent at `read.rs:331`. This is a fifth cohort with a JA3/JA4 nothing like Chrome's — rustls, not BoringSSL — and no browser identity whatsoever.
+
+Two things follow. First, it belongs in the §6 measurement matrix as its own baseline; a harness that only profiles the CDP backends will miss it entirely. Second, and worth noticing: **`read` already does what §5 recommends.** It identifies itself honestly, in the header a site actually reads, with a version string an operator could allowlist. It is the declared-identity posture, shipped, in the cheapest code path in the project. If the argument in §5 seems abstract, this is the concrete precedent — and the obvious place to attach a Web Bot Auth signature first, since it has no browser stack to reconcile.
+
+---
+
 ## 3. Four coherence findings worth fixing on their own merits
 
 These are defects independent of detection. Each would be worth fixing if no bot control existed anywhere.
@@ -99,34 +118,37 @@ The main interaction paths use CDP input — `Input.dispatchMouseEvent`, `dispat
 
 But several fast paths synthesize events in the page instead:
 
-- `element.rs:1180-1199` (`set_element_value`, reached only from the `setvalue` command at `actions.rs:6722`) — sets `.value` directly, then fires `input` and `change`.
-- `interaction.rs:154, 223, 455, 713-714, 832` — page-level `dispatchEvent(new Event(...))`.
+Three sites end a write with a synthetic event and no trusted event after it:
+
+- `element.rs:1180-1199` — `set_element_value`, reached only from the `setvalue` command (`actions.rs:6722`).
+- `interaction.rs:455` — `select_option`.
 - `actions.rs:8784` — `select.dispatchEvent(new Event('change', ...))`.
 
-`setvalue` is a deliberate escape hatch, so its being synthetic is a defensible design choice. The one that is not is in `fill` itself: the clear-field step at `interaction.rs:147-156` — inside `pub async fn fill` — runs `this.value = ''` plus a synthetic `input` via `Runtime.callFunctionOn`, and *then* types with trusted CDP key events. The common path therefore mixes provenance within a single action: untrusted clear, trusted keystrokes.
+**These are where the correctness bug lives, and the mechanism is worth getting right** because the intuitive version is backwards. React does not miss the update because a native setter was bypassed; it misses it because a native setter was *not* used. React installs a `_valueTracker` that shadows `value` on the instance, so `this.value = x` runs through React's own tracked setter and updates its cached value in lockstep. When the synthetic `input` arrives, `updateValueIfChanged` compares node value to tracked value, finds them equal, and drops the event — `onChange` never fires, and React may overwrite the DOM value on its next render. For a controlled input the suppression is deterministic, not occasional. The standard workaround is the inverse of the intuition: fetch `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set` and call it explicitly to defeat the tracker, *then* dispatch.
 
-Two consequences, and the first is the one that will actually bite:
+Two citations in that list are public API rather than defects, and shouldn't be read as such: `interaction.rs:832` implements the user-facing `dispatch_event(type, init)` verb, where emitting an untrusted event is the entire contract, and `select_option` has no CDP alternative because `Input` cannot drive a native `<select>`. The defect is the missing native-setter call, not the use of JavaScript.
 
-1. **Correctness.** React's controlled inputs are the canonical case. React installs a value tracker on the DOM node, so a direct `node.value = …` assignment updates the tracker *before* the synthetic `input` event arrives; React then compares tracked-versus-current, sees no change, and dedupes the event away without calling `onChange`. The documented workaround is to invoke the native prototype setter rather than the instance property. Concretely for `fill`: the clear is what React can miss, which shows up as a field that appends instead of replacing. The failure is silent and reads like a flaky selector.
-2. **Coherence.** A page that reads `event.isTrusted` sees a contradiction *within a single user action*, which is a sharper signal than uniformly untrusted input would be.
+**The `fill` path is a different problem.** The clear-field step at `interaction.rs:147-156` — inside `pub async fn fill` — runs `this.value = ''` plus a synthetic `input`, then writes the new value with `Input.insertText` (`interaction.rs:169`). Because `insertText` goes through the browser's own input machinery rather than the JS property, it desynchronizes the tracker and React re-syncs correctly. So the dropped clear event is harmless here: a correct event follows it.
 
-**Fix:** prefer real CDP input everywhere it works; keep the JS path as an explicit, logged fallback rather than a silent fast path; and assert the expected event sequence in tests. The handbook's *Native behavior beats broad spoofing* is the general form of this.
+What remains in `fill` is a provenance contradiction rather than a correctness bug — and a second artifact worth naming separately. `Input.insertText` produces a trusted `input` event but emits **no `keydown`, `keypress`, or `keyup` at all**. A page with a keystroke listener sees a value materialize without any keys being pressed. That is a sharper and more distinctive signal than an untrusted event, and it is invisible to any test that only asserts final field value.
 
-### 3.2 Identifying page globals
+**Fix:** for the three terminal-write sites, call the native prototype setter before dispatching. For `fill`, decide deliberately whether the verb should emit a key sequence — `insertText` is right for speed and wrong for anything testing key handling — and assert the expected event sequence either way. The handbook's *Native behavior beats broad spoofing* is the general form.
 
-The React profiler injects, via `Page.addScriptToEvaluateOnNewDocument` (`react/mod.rs:11, 25`; `react/scripts.rs`):
+### 3.2 Branded identifiers and unmasked wrappers in page scope
 
-```
-window.__AB_RENDERS__          window.__AB_RENDERS_ACTIVE__
-window.__AB_RENDERS_FPS__      window.__AB_RENDERS_START__
-window.__AB_RENDERS_ORIG_COMMIT__
-```
+Two separate injections put a stable, greppable tool name into page-reachable state. An `__AB_` or `_agentBrowser` prefix is exactly as identifying as ChromeDriver's `cdc_` properties or Puppeteer's `pptr:` source URLs: any site that has seen agent-browser once can detect it forever with a one-line check.
 
-An `__AB_` prefix is exactly as identifying as ChromeDriver's `cdc_` properties or Puppeteer's `pptr:` source URLs — a unique, greppable string naming the tool. It is opt-in and scoped to React profiling, which limits the blast radius, but any site that has seen agent-browser once can detect it forever with a one-line check.
+**The profiler globals.** `RENDERS_INIT` installs `__AB_RENDERS__`, `__AB_RENDERS_ACTIVE__`, `__AB_RENDERS_FPS__`, `__AB_RENDERS_START__`, and `__AB_RENDERS_ORIG_COMMIT__` (`react/scripts.rs`). These do require `--enable react-devtools`, since `RENDERS_INIT` early-returns without the DevTools hook (`react/scripts.rs:202`), and the hook is installed only under that flag (`actions.rs:3211-3228`, injected at `actions.rs:3223` and the CDP call at `browser.rs:1487`).
 
-Note the contrast with `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` (`react/mod.rs:26`), also injected: that one is *plausible*, because millions of real developers have React DevTools installed. It blends into a real population. The `__AB_` globals do not.
+But **`vitals` is not React-gated**, and it carries the same prefix. `VITALS_INIT` installs `__AB_VITALS__`, `__AB_VITALS_INSTALLED__` (`react/scripts.rs:671-675`), and `__AB_REACT_TIMING__` (`:729`), and is injected at `actions.rs:7094` and `:7102`. The module's own docs call `vitals` a "universal verb" that is "framework-agnostic" and needs no DevTools hook (`react/mod.rs:1-7`). So the `__AB_` namespace reaches ordinary non-React pages, and the blast radius is wider than "React profiling."
 
-**Fix:** move profiler state off `window` into a closure or an isolated world, or at minimum randomize the property name per session so it is not a stable string. Do this because leaking tool internals into page scope is bad hygiene — a page can read *and tamper with* `__AB_RENDERS_ORIG_COMMIT__` — not only because it is detectable.
+The contrast with `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` is still instructive but works differently than it first appears: that global is *plausible* — millions of developers have React DevTools installed, so it blends into a real population — and it is also the flag-gated one. The distinctive global is the ungated one.
+
+**The domain-filter script is the larger artifact, and it rides the security path.** With `--allowed-domains` set, `install_domain_filter_script` (`network.rs:161-183`) replaces `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `navigator.sendBeacon`, and `RTCPeerConnection` with wrappers (`network.rs:346-426`). There is no `Function.prototype.toString` masking anywhere in the file, so all six report as non-native to a one-line check. Worse, `network.rs:299` serializes the installer into worker bootstrap source via `_agentBrowserInstallDomainFilter.toString()`, placing the literal function name in page-reachable state.
+
+This matters more than the profiler globals for a simple reason: it is attached to a *security* feature. Anyone restricting an agent to an origin allowlist — the cautious, recommended configuration — gets six unmasked monkeypatches and a branded identifier, while the careless user who skips `--allowed-domains` gets none of them. The safety feature is the loudest thing in the page.
+
+**Fix:** move profiler and vitals state off `window` into a closure or isolated world. For the domain filter, mask `toString` on the replaced functions and stop embedding the installer's name in worker source — or better, move enforcement to CDP `Fetch`/`Network` interception, which is not page-observable at all. Do this because leaking tool internals into page scope is bad hygiene — a page can read *and tamper with* `__AB_RENDERS_ORIG_COMMIT__`, and can detect exactly which security controls are active — not only because it is fingerprintable.
 
 ### 3.3 No identity manifest
 
@@ -194,22 +216,23 @@ and in the agent rules:
 
 > MUST NOT rotate identity after enforcement.
 
-"Retry with a different browser identity until one gets through" is enforcement evasion regardless of how the retry is implemented. It is also the specific behavior that turns a QA tool into something a site owner will describe to their lawyer as circumvention. That it is automated and tasteful does not change the character of the act.
+"Retry with a different browser identity until one gets through" is enforcement evasion regardless of how the retry is implemented.
 
-The distinction is sharp and worth stating precisely:
+**Be precise about what the rule constrains.** Every tier in §4.1 *is* a different identity — different GPU, fonts, egress, profile, sometimes a different engine. Promotion is therefore always identity rotation, and the quoted rule does no work on the act itself. The entire distinction rests on the **trigger**. A cascade cannot be made compliant by changing how it switches identities; only by constraining what causes it to.
 
 | Trigger | Verdict |
 |---|---|
 | Page rendered blank; content requires JS | Promote |
 | WebGL required, SwiftShader output insufficient | Promote |
 | Selector never appeared; DOM lacks the element | Promote |
-| Timeout, transport error, browser crash | Retry or promote |
+| Transport error or browser crash | Retry at the same tier |
+| Navigation timeout | Stop and log — see §4.3, a challenge with a delay loop presents exactly this way |
 | **HTTP 403 from a bot control** | **Stop** |
 | **Interstitial or challenge page detected** | **Stop** |
 | **429 rate limit** | **Honor `Retry-After`; do not switch identity** |
 | **CAPTCHA appeared** | **Stop** |
 
-A useful implementation test: *if the origin were a cooperating partner watching your logs, would this promotion embarrass you?* Capability promotions are boring. Enforcement promotions are the ones you would not want to explain.
+Every row above is a clean case. The cascade will not fail on those — it will fail on the ambiguous ones below.
 
 ### 4.3 The ambiguous cases, which are the ones that matter
 
@@ -221,9 +244,17 @@ The fix is ordering: **run challenge detection first, and let it win.** A challe
 
 **Headless fails, headful works.** The most common real promotion, and genuinely ambiguous. It could be that the site's layout needs a real compositor, or that video decode needs a real GPU — legitimate capability. Or the site detected headless — enforcement. Frequently you cannot tell from the outside.
 
-Treat unexplained lower-tier failure as a **stop-and-log**, not an automatic promotion. If a specific origin turns out to have a real rendering requirement, record that in the per-origin policy and let the promotion happen because it was *decided*, not because it was *attempted*. "Promote and find out" is exactly how this boundary erodes: each individual promotion looks reasonable, and the aggregate is a retry-until-through loop.
+Treat unexplained lower-tier failure as a **stop-and-log**, not an automatic promotion. "Promote and find out" is exactly how this boundary erodes: each individual promotion looks reasonable, and the aggregate is a retry-until-through loop.
+
+The obvious escape hatch — record the rendering requirement in per-origin policy, then let the promotion happen because it was *decided* rather than *attempted* — has a hole in it, and it is worth closing explicitly because it is the hatch this document recommends. The operator's only available basis for that policy entry is usually "headful worked and headless didn't," which is the same enforcement observation with a human inserted to relabel it. A human in the loop launders the evidence; it does not change it. So require the entry to cite evidence **independent of the failure that prompted it** — a documented WebGL or video requirement, an authorization record, an operator-owned origin — and to name that evidence in the policy file. If the only justification is "the lower tier got blocked," that is not a capability finding no matter who writes it down.
 
 **A 403 that is not a bot control.** Geo-restriction, expired credentials, and genuinely missing authorization all return 403, and only some are bot controls. Do not build a classifier that tries to tell them apart in order to decide whether to keep going. Default 403 to `STOP` and let the per-origin policy carve out the known-benign cases explicitly. A conservative default that occasionally halts a legitimate job is recoverable; a permissive default that occasionally evades enforcement is not.
+
+The asymmetry with the challenge classifier above is deliberate, not a contradiction: build one, don't build the other. A challenge classifier's only output is `STOP`, so its errors fail safe. A 403 classifier's output is permission to continue, so its errors fail toward proceeding against an origin that refused. Build classifiers whose failure mode is halting.
+
+**Promotion into someone else's stealth profile.** This is the hole the three cases above do not close. §4.1's tier 3 promotes to a remote provider on "needs an environment the local host cannot provide," which quietly admits "the local host cannot provide a clean residential egress" as a *capability* trigger. And per §2.4, Kernel's headless profile ships a default stealth flag list. So the top of the cascade is *promote into a stealth configuration you did not write and cannot see* — reachable without ever authoring an enforcement rule, and phrased in capability language throughout.
+
+Draw the line by what changes rather than by which tier you are entering: a promotion that buys **horsepower** (more GPU, more memory, a display) is a capability decision and belongs to the cascade; a promotion that changes **identity** — egress, ASN, geography, or a provider-supplied automation-suppression profile — is a stealth decision and takes the §5 authorization gate instead. Tier 3 usually does both at once, which is exactly why it needs to be split rather than waved through. In practice: enumerate what the provider's profile actually differs in before wiring it into a cascade, and if you cannot enumerate it, that is itself the finding.
 
 **Enforcement disguised as a transient error.** The table treats timeouts, connection resets, and transport errors as retryable, which is correct in general and exploitable in particular: a bot control that drops connections or serves a 503 is indistinguishable from a flaky network at the single-request level. The distinguishing feature is not the individual failure but its *distribution* — enforcement concentrates on one origin while the rest of the fleet is healthy. Borrow the handbook's circuit breaker: track transient-failure rate per origin, and when it exceeds a threshold, escalate to the stop path rather than continuing to retry. A retry budget that is per-request rather than per-origin will happily grind against an origin that has already decided to refuse you.
 
@@ -241,7 +272,7 @@ There is a legitimate version of site-specific configuration, and it is worth bu
 
 `cli/src/native/policy.rs` already has the right primitive: an `ActionPolicy` returning `Allow`, `Deny`, or `RequiresConfirmation`, loaded from JSON, with an `AGENT_BROWSER_CONFIRM_ACTIONS` env override. Today it gates *actions*. Extend the same mechanism to gate origins and tier promotions, and the cascade gets an auditable policy layer instead of scattered conditionals.
 
-There is currently **no** backend or provider cascade in the codebase. The only retry logic is transient IPC/daemon handling in `connection.rs:1005-1081`, which is unrelated. The cascade would be new construction, so it can be built with the stop-state in it from the first commit rather than retrofitted — which is the only time these boundaries actually hold.
+There is currently **no backend or provider cascade** in the codebase — I searched for one specifically. Retry and fallback logic does exist elsewhere (transient IPC handling in `cli/connection.rs:1005-1081`, daemon respawn in `main.rs:1675`, download retry in `install.rs:256`, accessibility-tree re-query in `element.rs:345` and `:516`, and a content-extraction fallback ladder in `read.rs`), but none of it switches backend or provider. The cascade would be new construction, so it can be built with the stop-state in it from the first commit rather than retrofitted — which is the only time these boundaries actually hold.
 
 ---
 
@@ -254,7 +285,7 @@ Splitting the ask honestly:
 - **Headful with a real display and hardware GPU.** Removes `--headless=new` from the AutomationControlled set, replaces SwiftShader with a real renderer, and fixes genuine rendering differences. Biggest single fidelity gain.
 - **A real font corpus matched to the declared OS cohort.** Kernel's own history is the case study: commit `cba3f77` added fonts specifically because a three-font container was a signal. Match a cohort; do not install everything.
 - **Persistent profiles with single ownership.** Already supported via `--user-data-dir`. Needs leasing, encryption, and a TTL — `storageState` and cookies are bearer credentials.
-- **Stable egress per session.** Proxy support exists; egress *stability* and IPv6/DNS/WebRTC leak policy do not. A session whose ASN changes mid-flight is incoherent no matter how good the browser is.
+- **Stable egress per session, and fix the WebRTC trigger.** Proxy support exists; egress *stability* and IPv6/DNS policy do not. A session whose ASN changes mid-flight is incoherent no matter how good the browser is. WebRTC containment *does* exist and is well built — `chrome.rs:510-517` forces `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` and `retain`s away any user override so it cannot be weakened, and `network.rs:405-427` blocks `RTCPeerConnection` in-page. But both gate on `restrict_webrtc`, which `actions.rs:2938` and `:3707` define as `!allowed_domains.is_empty()`. **The leak protection is wired to `--allowed-domains`, not to `--proxy`**, so a proxied session without domain filtering — the natural way to use a proxy — leaks the real IP over UDP. Gate it on proxy configuration instead, or on both.
 - **Fix §3.1 and §3.2.** Correctness wins that also remove artifacts.
 - **An identity manifest (§3.3)** that rejects contradictions before launch.
 
@@ -292,7 +323,7 @@ Minimum useful harness:
 
 1. **A first-party origin** that records what each backend actually emits: TLS ClientHello and JA4, ALPN, HTTP version, H2 SETTINGS and pseudo-header order, full header order, source IP and ASN. Never a third-party checker, and never with production credentials.
 2. **A cross-context probe** asserting that UA, languages, platform, `hardwareConcurrency`, and timezone agree across page, iframe, dedicated worker, and service worker. This catches emulation that only applied to the main realm — the most common silent failure.
-3. **A per-backend cohort baseline.** Native-headless, native-headful, Lightpanda, and each remote provider are *different cohorts*. A remote provider's output is a measurement of that provider, and it can change without notice, so re-baseline on a schedule rather than on suspicion.
+3. **A per-backend cohort baseline.** Native-headless, native-headful, Lightpanda, WebDriver, `read`, and each remote provider are *different cohorts* — six kinds of client, not one. `read` is the easiest to forget and the most distinctive, since its rustls handshake looks nothing like Chrome's. A remote provider's output is a measurement of that provider and can change without notice, so re-baseline on a schedule rather than on suspicion.
 4. **Positive and negative controls.** Include a plain WebDriver session with `navigator.webdriver === true` to prove the probe can see an intentional signal, and a stock browser to measure false positives.
 5. **An `isTrusted` assertion** across every interaction verb, which would have caught §3.1 automatically.
 
@@ -302,21 +333,20 @@ Run these per Chrome release. Every version-specific claim in this document is a
 
 ## 7. Recommended order of work
 
-1. Fix mixed input provenance (§3.1) — correctness bug, cheapest, highest immediate payoff.
-2. Fix `--user-agent` to carry `userAgentMetadata`, or refuse the override (§3.4) — currently makes clients worse, not better.
-3. Change the `--args` help-text example (§5) — a one-line diff that stops recommending the anti-pattern.
-4. De-globalize the `__AB_` profiler state (§3.2) — small, contained hygiene fix.
-5. Build the origin-side measurement harness (§6) — everything after this is guesswork without it.
-6. Introduce the identity manifest (§3.3) — the structural prerequisite for the cascade and for §3.4's fix.
-7. Build the capability cascade (§4.1) with the stop-state (§4.2) present from the first commit.
-8. Add headful/hardware-GPU and font-cohort tiers (§5) — the largest fidelity gain.
-9. Extend `policy.rs` to per-origin authorization, and gate the suppression flags behind it (§4.5, §5).
-10. Track Web Bot Auth (§5) and prototype request signing when the drafts stabilize.
+1. **Re-gate WebRTC containment on proxy configuration** (§5) — today a proxied session without `--allowed-domains` leaks the real IP over UDP. A real leak, and the smallest diff on this list.
+2. Fix the three terminal synthetic writes to call the native prototype setter (§3.1) — silent correctness bug in React apps.
+3. Fix `--user-agent` to carry `userAgentMetadata`, or refuse the override (§3.4) — currently makes clients worse, not better.
+4. Change the `--args` help-text example (§5) — a one-line diff that stops recommending the anti-pattern.
+5. Mask `toString` on the domain-filter wrappers and stop embedding `_agentBrowserInstallDomainFilter` in worker source (§3.2) — or move enforcement to CDP interception and remove the page surface entirely.
+6. De-globalize the `__AB_` profiler and vitals state (§3.2).
+7. Build the origin-side measurement harness (§6), covering all five cohorts including `read` — everything after this is guesswork without it.
+8. Introduce the identity manifest (§3.3) — the structural prerequisite for the cascade and for item 3's fix.
+9. Reconsider the throwaway-profile default (§2.1) — persistent profiles are supported but off, and a perpetually-new browser is a louder signal than anything in §3.
+10. Build the capability cascade (§4.1) with the stop-state (§4.2) and the tier-3 identity/horsepower split (§4.3) present from the first commit.
+11. Add headful/hardware-GPU and font-cohort tiers (§5) — the largest fidelity gain.
+12. Extend `policy.rs` to per-origin authorization, and gate the suppression flags behind it (§4.5, §5).
+13. Track Web Bot Auth (§5); prototype signing on `read` first, since it has no browser stack to reconcile.
 
-Items 1-5 are worth doing regardless of any position on detection. That is the tell that they are the right place to start.
+Items 1-5 are worth doing regardless of any position on detection, which is why they come first: they need no policy decision to justify them.
 
----
-
-## Closing
-
-The most valuable property agent-browser has right now is that it is honest by default — `--remote-debugging-port=0` arrived at the cooperative behavior by accident, and the four findings in §3 are all fixable without giving that up. Whatever gets built on top, keep the stop-state. It is much easier to hold a boundary that was never crossed than to reintroduce one after the retry loop already works.
+The property worth protecting through all of it is that agent-browser is honest by default. `--remote-debugging-port=0` arrived at the cooperative behavior by accident, and every finding above is fixable without giving that up.
