@@ -62,7 +62,11 @@ That is `plugins.rs:1272` — the handbook's canonical anti-pattern, shipped as 
 
 This matters for §5. Suppression is not hypothetical future work requiring a design decision; it is **reachable today through documented flags, with no authorization gate anywhere in the path**. The engineering question is not whether to build it but whether to put a gate in front of what already exists.
 
-**The default profile may be the loudest signal in the whole system, and it is not a flag anyone chose.** Without `--profile`, `chrome.rs:473-478` creates `agent-browser-chrome-<uuid>` in the temp directory on every launch. Each session therefore presents a browser with no cookies, no history, no site engagement, no permission decisions, and a first-run timestamp seconds old. The handbook's *state* layer — profile continuity, cookies, caches, service workers — is empty by construction, and a perpetually-brand-new browser is a stronger and more durable signal than any of the JavaScript artifacts in §3. Persistent profiles are supported; they are simply not the default.
+**The default profile may be the loudest signal in the whole system, and it is not a flag anyone chose.** Without `--profile`, `chrome.rs:473-478` creates `agent-browser-chrome-<uuid>` in the temp directory for each browser launch, and `Drop for ChromeProcess` (`chrome.rs:67-80`) deletes it with `remove_dir_all` when the process ends.
+
+Be precise about the lifetime, because it cuts both ways. State *does* accumulate within a live session — the daemon holds one browser process across many commands, so cookies set on the third command are visible on the tenth. But every session begins from nothing and discards everything on close. There is no path by which a default-configured profile ever ages.
+
+So the handbook's *state* layer — profile continuity, cookies, caches, service workers, permission decisions — is empty at the start of every session and permanently discarded at the end. A browser that is always brand new, on a first-run timestamp seconds old, is a more durable signal than any of the JavaScript artifacts in §3, and unlike those it is not a bug anyone introduced. Persistent profiles are supported via `--profile`; they are simply not the default. Whether that default is right is a product decision, but it should be a deliberate one.
 
 The `--remote-debugging-port=0` choice deserves emphasis because it is easy to misread as incidental. Chromium special-cases it deliberately: port `0` is the ephemeral port ChromeDriver uses, so it counts as automation, whereas a fixed port is assumed to be a developer attaching a debugger and leaves the feature unset. The handbook covers this in *Automation signals and control stacks*. agent-browser therefore reports its automation status truthfully by default — the cooperative behavior, arrived at as a side effect.
 
@@ -148,7 +152,11 @@ The contrast with `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` is still instructive b
 
 This matters more than the profiler globals for a simple reason: it is attached to a *security* feature. Anyone restricting an agent to an origin allowlist — the cautious, recommended configuration — gets six unmasked monkeypatches and a branded identifier, while the careless user who skips `--allowed-domains` gets none of them. The safety feature is the loudest thing in the page.
 
-**Fix:** move profiler and vitals state off `window` into a closure or isolated world. For the domain filter, mask `toString` on the replaced functions and stop embedding the installer's name in worker source — or better, move enforcement to CDP `Fetch`/`Network` interception, which is not page-observable at all. Do this because leaking tool internals into page scope is bad hygiene — a page can read *and tamper with* `__AB_RENDERS_ORIG_COMMIT__`, and can detect exactly which security controls are active — not only because it is fingerprintable.
+**Fix:** move profiler and vitals state off `window` into a closure or isolated world, and rename `_agentBrowserInstallDomainFilter` to something unbranded so the worker-bootstrap source stops carrying the tool's name.
+
+For the domain filter itself, **move enforcement to CDP `Fetch`/`Network` interception** rather than page-level wrappers. It is worth being explicit about the option not taken: masking `Function.prototype.toString` on the six wrappers would hide them, and that is the wrong fix twice over. The handbook classes exactly that shim as an anti-pattern — it has to survive descriptor inspection, prototype ownership, illegal invocation, and every worker and cross-origin realm, and most such shims do not. And there is no authorization story for it, because the thing being concealed is a security control the operator chose to enable. Protocol-level interception has neither problem: nothing is patched, so nothing needs disguising, and the enforcement is stronger because page code cannot reach around it.
+
+The reason to do any of this is hygiene before fingerprinting. A page can currently read *and tamper with* `__AB_RENDERS_ORIG_COMMIT__`, and can enumerate which of the operator's security controls are active — both are defects whatever a detector does with them.
 
 ### 3.3 No identity manifest
 
@@ -278,7 +286,13 @@ There is currently **no backend or provider cascade** in the codebase — I sear
 
 ## 5. What "undetectable" can and cannot mean here
 
-Splitting the ask honestly:
+Splitting the ask honestly requires a test, because the obvious objection to any such split is that it is rationalization. Every item in the first pile below *does* make the browser harder to detect. If "harder to detect" were the criterion, the piles would collapse into one.
+
+**The test is whether a change makes a true statement true, or makes a false statement plausible.** Installing a font corpus means the browser genuinely has those fonts. Using a real GPU means it genuinely renders with that GPU. A persistent profile genuinely accumulates the history it reports. Nothing is asserted that is not the case, and the browser would survive arbitrarily deep inspection because there is nothing underneath to find. By contrast, `--disable-blink-features=AutomationControlled` makes a truthful signal report falsely, and `--user-agent` without metadata makes the client contradict itself on the first request. Those are claims about a browser that does not exist.
+
+This is the same line the handbook draws with *Native behavior beats broad spoofing* and *Truthful cohorts beat arbitrary personas*, and it has a practical corollary: first-pile work is durable because reality does not drift out from under it, while second-pile work breaks on every browser release.
+
+Two honest concessions. The test is about the change, not the motive, so it does not discriminate by intent — and at the margin intent does matter. An aged profile is genuinely aged, but if the reason for aging it is to pass for a human rather than to test session continuity, that is closer to the line than a real GPU is, whatever the mechanism. And a sufficiently complete first pile does converge on "indistinguishable from an ordinary browser," which is the point: an authorized automation client *is* an ordinary browser, run by someone with permission. The test stops being useful only if you are trying to launder the second pile through the first, which is why the gate in the second list matters more than the list itself.
 
 **Available, valuable, and requires no one's permission — do all of this:**
 
@@ -337,7 +351,7 @@ Run these per Chrome release. Every version-specific claim in this document is a
 2. Fix the three terminal synthetic writes to call the native prototype setter (§3.1) — silent correctness bug in React apps.
 3. Fix `--user-agent` to carry `userAgentMetadata`, or refuse the override (§3.4) — currently makes clients worse, not better.
 4. Change the `--args` help-text example (§5) — a one-line diff that stops recommending the anti-pattern.
-5. Mask `toString` on the domain-filter wrappers and stop embedding `_agentBrowserInstallDomainFilter` in worker source (§3.2) — or move enforcement to CDP interception and remove the page surface entirely.
+5. Move domain-filter enforcement to CDP `Fetch`/`Network` interception (§3.2) — removes six page-level wrappers and the branded identifier outright, and is harder for page code to reach around. Do not mask `toString` instead; that is the anti-pattern, not the fix.
 6. De-globalize the `__AB_` profiler and vitals state (§3.2).
 7. Build the origin-side measurement harness (§6), covering all five cohorts including `read` — everything after this is guesswork without it.
 8. Introduce the identity manifest (§3.3) — the structural prerequisite for the cascade and for item 3's fix.
