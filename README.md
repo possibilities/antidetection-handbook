@@ -18,6 +18,16 @@ This is deliberately narrower than defeating bot controls. It does **not** autho
 
 The document is intentionally self-contained. Linked sources establish provenance, expose version-sensitive details, and provide deeper verification; reading them should not be required to understand the implementation model here.
 
+### Scope and non-goals
+
+Knowing this handbook's edges prevents misapplying it:
+
+- **Primary subject:** desktop Chromium-family browsers driven by CDP or WebDriver on Linux container hosts. Firefox and WebKit appear mainly where they illustrate a contrast.
+- **Not covered:** native mobile app automation, Android/iOS browser automation, device farms, and emulator fingerprinting. The constraint-graph model transfers; the specific surfaces and controls do not.
+- **Not covered:** building a detector. The observation inventory exists so an automation engineer can find their own contradictions. Defenders should start from the OWASP references in the source library.
+- **Not covered:** any technique whose purpose is defeating a bot control the reader neither owns nor has written permission to test against. Where such techniques are inventoried, it is to explain why they fail, what they cost, and what authorization they require.
+- **Perishable by construction.** Every version-specific claim below is a hypothesis to re-measure, not a constant. See [Refreshing this snapshot](#refreshing-this-snapshot).
+
 ## Contents
 
 1. [The five-minute model](#the-five-minute-model)
@@ -36,6 +46,7 @@ The document is intentionally self-contained. Linked sources establish provenanc
 14. [Security, privacy, legal, and abuse controls](#security-privacy-legal-and-abuse-controls)
 15. [Developer and agent checklists](#developer-and-agent-checklists)
 16. [Annotated source library](#annotated-source-library)
+17. [Refreshing this snapshot](#refreshing-this-snapshot)
 
 ---
 
@@ -84,7 +95,7 @@ Treat the client as a **constraint graph**. Nodes are observable values; edges e
 
 ### The practical hierarchy
 
-1. **Cooperate when possible.** Prefer official APIs, test tenants, service accounts, signed test headers, sandbox challenge keys, or allowlisted CI ranges.
+1. **Cooperate when possible.** Prefer official APIs, test tenants, service accounts, signed test headers, sandbox challenge keys, or allowlisted CI ranges. Where the origin supports a [declared cryptographic identity](#declared-identity-signing-requests-instead-of-hiding-them), that outranks every technique in this document.
 2. **Use a real, current browser.** Let its own engine produce JavaScript semantics, TLS, HTTP/2/3, headers, rendering, and events.
 3. **Choose a truthful cohort.** Browser, OS, architecture, GPU/display class, locale, and network path must describe the environment actually running.
 4. **Derive one identity once.** Keep it stable for a profile/session. Do not independently randomize every API.
@@ -449,7 +460,22 @@ As of the research snapshot, Chromium enables its Blink `AutomationControlled` f
 - `--remote-debugging-pipe`;
 - `--remote-debugging-port=0`.
 
-A fixed nonzero debugging port alone deliberately does not enable it. `--disable-blink-features=AutomationControlled` changes that feature state but does not remove CDP control, injected code/worlds, protocol serialization, launch configuration, environment differences, or behavior. Current WebIDL still contains `Navigator.webdriver`; a natural disabled value is generally `false`, not a deleted/`undefined` member. Verify against current [Chromium `Navigator` source](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/frame/navigator.cc) and [runtime feature wiring](https://chromium.googlesource.com/chromium/src/+/main/content/child/runtime_features.cc).
+A fixed nonzero debugging port alone deliberately does not enable it—the [wiring](https://chromium.googlesource.com/chromium/src/+/main/content/child/runtime_features.cc) special-cases port `0` and comments that a specific port "is more likely for attaching a debugger, so we should leave `EnableAutomationControlled` unset." `--disable-blink-features=AutomationControlled` changes that feature state but does not remove CDP control, injected code/worlds, protocol serialization, launch configuration, environment differences, or behavior. Current WebIDL still contains `Navigator.webdriver`; a natural disabled value is generally `false`, not a deleted/`undefined` member.
+
+The runtime feature is not the only input. [`Navigator::webdriver()`](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/frame/navigator.cc) returns `true` when the feature is enabled and otherwise consults a DevTools probe override:
+
+```cpp
+bool Navigator::webdriver() const {
+  if (RuntimeEnabledFeatures::AutomationControlledEnabled())
+    return true;
+
+  bool automation_enabled = false;
+  probe::ApplyAutomationOverride(GetExecutionContext(), automation_enabled);
+  return automation_enabled;
+}
+```
+
+Two consequences follow. Suppressing the launch-time feature does not pin the value, because an attached client can still set it at runtime. More usefully, that override is a supported way to make an authorized session report itself **truthfully** even when the launch path would otherwise leave the flag clear—the cooperative option in tier 1 below, not merely the absence of a suppression flag. Verify both paths against current Chromium source rather than trusting this summary.
 
 ### Headless is now the normal Chrome implementation—but not a normal desktop
 
@@ -489,7 +515,7 @@ Current examples worth measuring rather than assuming:
 
 ### Tool landscape at the snapshot date
 
-Versions move quickly; these are a dated map, not evergreen endorsements.
+Versions move quickly; these are a dated map, not evergreen endorsements. Every version below was resolved against its package registry on the snapshot date. Publication dates matter as much as version numbers—two of these projects have not shipped in years, which is a maintenance finding rather than a stability signal.
 
 | Tool | What it changes | Limits and maintenance risk |
 |---|---|---|
@@ -505,6 +531,28 @@ Versions move quickly; these are a dated map, not evergreen endorsements.
 | **Fingerprint generators** | Generate plausible header/JS vectors from observed distributions. | Not browser engines or controllers; cannot guarantee worker, native, transport, GPU, font or codec coherence. |
 
 Primary repositories: [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright), [rebrowser-patches](https://github.com/rebrowser/rebrowser-patches), [puppeteer-extra stealth](https://github.com/berstend/puppeteer-extra/tree/master/packages/puppeteer-extra-plugin-stealth), [Camoufox](https://github.com/daijro/camoufox), [undetected-chromedriver](https://github.com/ultrafunkamsterdam/undetected-chromedriver), [nodriver](https://github.com/ultrafunkamsterdam/nodriver), [Playwright](https://github.com/microsoft/playwright), and [Puppeteer](https://github.com/puppeteer/puppeteer).
+
+### Declared identity: signing requests instead of hiding them
+
+Everything above concerns what an automated client *leaks*. A parallel line of standards work concerns what it can *assert*. For a handbook whose first rule is "cooperate when possible," this is the most important development to track, because it converts "prove you are not a bot" into "prove which bot you are"—a question authorized automation can actually answer.
+
+**Web Bot Auth** applies [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421) to automated traffic. The client signs outbound requests with a private key; the origin verifies the signature and learns a verified operator identity rather than guessing from fingerprints. As of the research snapshot the IETF has an active [`webbotauth` working group](https://datatracker.ietf.org/group/webbotauth/), and the two principal drafts are:
+
+- [`draft-meunier-web-bot-auth-architecture`](https://datatracker.ietf.org/doc/draft-meunier-web-bot-auth-architecture/) (rev 05, Informational, March 2026; Meunier/Cloudflare and Major/Google) — the overall model.
+- [`draft-meunier-http-message-signatures-directory`](https://datatracker.ietf.org/doc/draft-meunier-http-message-signatures-directory/) (rev 05) — how a verifier discovers an operator's public keys.
+
+Mechanically, a signing agent sends `Signature` and `Signature-Input` per RFC 9421, plus a `Signature-Agent` header naming the FQDN that hosts its key directory. The verifier fetches that directory and checks the signature; `keyid` is a base64url JWK SHA-256 thumbprint, and Ed25519 is a supported algorithm. These are Internet-Drafts, not settled standards—header shapes and directory formats have already changed across revisions (the architecture draft carries explicit "legacy `Signature-Agent`" compatibility cases), so pin a revision and re-read before implementing.
+
+**Privacy Pass** is the mirror-image mechanism and is genuinely standardized: [RFC 9576](https://www.rfc-editor.org/rfc/rfc9576.html) (architecture, Informational), [RFC 9577](https://www.rfc-editor.org/rfc/rfc9577.html) (HTTP authentication scheme), and [RFC 9578](https://www.rfc-editor.org/rfc/rfc9578.html) (issuance protocols), all June 2024. It lets a client present an anonymous, unlinkable token attesting that some issuer vouched for it, so an origin can reduce challenges without fingerprinting. Private Access Tokens are the best-known deployment. Privacy Pass attests *a property* without identifying the client; Web Bot Auth identifies *an operator* deliberately. They solve opposite halves of the same problem, and neither is an evasion technique.
+
+Why this belongs in an engineering handbook rather than a policy appendix:
+
+- **It changes the target.** If a site accepts a signed operator identity, the correct engineering investment is key management, directory hosting, and operator registration—not fingerprint coherence. Coherence work remains necessary for fidelity testing; it stops being the mechanism by which you obtain access.
+- **It is auditable.** A signing key is an authorization artifact. It fits the identity manifest and the authorization record directly, and it fails closed when revoked.
+- **It does not make suppression legitimate.** Holding a signing key for one origin authorizes nothing at another. Signed identity and concealed identity are opposites; a system that signs where it is welcome and suppresses where it is not has not adopted this model.
+- **Verification is the origin's choice.** Major CDNs run verified-bot programs with their own enrollment; participation is a business relationship, not a header you can set. Treat vendor-specific programs as deployment detail on top of the standards above, and confirm current requirements directly with the provider.
+
+Prefer a declared identity wherever the origin supports one. Where it does not, the cooperative options in tier 1 below still rank above anything that conceals automation status.
 
 ### Choosing a stack
 
@@ -1397,9 +1445,11 @@ Relevant intent is also visible in snapshot ancestry: `cba3f77` added fonts afte
 
 These are facts about the pinned public image source, not claims about unobserved hosted edge controls or private image overrides. Treat production impact as conditional, but do not assume a private layer repairs them.
 
-1. **The public xDS TLS client does not authenticate its server.** [`bootstrap.yaml#L23-L25`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bootstrap.yaml#L23-L25) sends a bearer JWT, while [`#L57-L63`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bootstrap.yaml#L57-L63) supplies only SNI. Envoy 1.32 documents that [server-certificate verification is disabled by default](https://www.envoyproxy.io/docs/envoy/v1.32.11/api-v3/extensions/transport_sockets/tls/v3/tls.proto.html); SNI is not validation. Configure a trusted CA plus exact DNS SAN verification—or an equivalent verified SDS context, preferably mTLS—before sending the token.
+1. **The public xDS TLS client does not authenticate its server.** [`bootstrap.yaml#L23-L25`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bootstrap.yaml#L23-L25) sends a bearer JWT, while [`#L57-L63`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bootstrap.yaml#L57-L63) supplies only SNI—an `UpstreamTlsContext` with no `common_tls_context` or `validation_context`. Envoy 1.32 documents that [server-certificate verification is disabled by default](https://www.envoyproxy.io/docs/envoy/v1.32.11/api-v3/extensions/transport_sockets/tls/v3/tls.proto.html); SNI is not validation. The block's own comment reads "Uses TLS to verify xDS server, and SNI hostname for TLS handshake"—it asserts verification the configuration does not implement, which is the more instructive half of the finding. Configure a trusted CA plus exact DNS SAN verification—or an equivalent verified SDS context, preferably mTLS—before sending the token.
 2. **`/playwright/execute` is container-level code execution.** Caller code runs in the daemon’s Node global realm; the [API launches it with the full environment](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/api/api/playwright.go#L62-L65), and the public [headful final stage](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headful/Dockerfile#L383-L391), [headless final stage](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headless/image/Dockerfile#L229-L279), and [API supervisor entry](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headful/supervisor/services/kernel-images-api.conf) do not select a non-root API user. The abort path races the promise but does not terminate underlying asynchronous code, and synchronous code can block the timer. Outer authorization is necessary but not a sandbox: use a killable, resource-limited, unprivileged per-request process/container with a sanitized environment and no profile, CA-key, or control-plane-secret access.
-3. **The proxy CA private key is shared in the image trust domain and is not hostname-constrained.** The [public build script](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bake-certs.sh#L29-L47) under Ubuntu/OpenSSL produces a `CA:TRUE` certificate; its localhost SAN identifies the CA certificate but is not an [RFC 5280 name constraint](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.2.1.10) on issued leaves. Generate isolated per-instance credentials outside image layers, keep signing keys inaccessible to workloads, rotate them, and pin or otherwise constrain the intended localhost endpoint.
+3. **The proxy CA private key is shared in the image trust domain and is not hostname-constrained.** The [public build script](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/shared/envoy/bake-certs.sh#L29-L47) under Ubuntu/OpenSSL produces a `CA:TRUE` certificate; its localhost SAN identifies the CA certificate but is not an [RFC 5280 name constraint](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.2.1.10) on issued leaves. `openssl req -x509 -nodes` leaves the key unencrypted in the image, and `certutil -t "C,,"` installs the certificate as a trust anchor in both NSS databases and the system store. Generate isolated per-instance credentials outside image layers, keep signing keys inaccessible to workloads, rotate them, and pin or otherwise constrain the intended localhost endpoint.
+
+**Findings 2 and 3 compose, and that composition is the actual risk.** Neither image Dockerfile contains a `USER` directive, so the API runs as root; the daemon inherits `os.Environ()`. Caller-supplied code submitted to `/playwright/execute` therefore runs as root inside the container and can simply read the CA private key, then mint leaf certificates for any origin that the same container's Chromium already trusts. The build script carries an in-repo rebuttal—"Sharing the key across containers built from the same image does not widen the threat model"—which holds only while nothing untrusted executes in the container. Finding 2 establishes that something untrusted does. This is the general lesson, not a Kernel-specific one: a trust-store assumption and a code-execution surface are each defensible in isolation and jointly fatal, so audit privilege boundaries as a graph rather than a checklist.
 
 ### Other important limits
 
@@ -1447,6 +1497,7 @@ The public repo contains several **image/runtime primitives**: real Chrome, same
 | “A unique fingerprint is bad, a common one is good.” | Uniqueness is dataset-relative; authenticity, stability, linkability and risk are separate. |
 | “A fingerprint is authentication.” | Fingerprints can collide, drift and be cloned. Use real authentication such as WebAuthn. |
 | “robots.txt grants access.” | [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309.html) says its rules are requested crawler behavior and **not access authorization**. |
+| “Detection is an arms race, so evasion is the only strategy.” | Signed operator identity ([RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) and the Web Bot Auth drafts) and attestation tokens (Privacy Pass) let a client be identified rather than guessed at. Where an origin supports either, evasion is the strictly worse engineering choice. |
 
 ---
 
@@ -1585,6 +1636,7 @@ Preserve only the minimum forensic evidence, rotate exposed credentials, notify 
 - [ ] Written authorization, immutable evidence, approved methods/artifact digests, allowed origins/actions/accounts and expiry exist.
 - [ ] Requested control, patch, network, permission and input methods are machine-checked against that authorization.
 - [ ] Official API/test mode/allowlisting was considered before browser hardening.
+- [ ] Declared-identity options (signed requests, verified-operator enrollment) were checked before any signal-suppression work.
 - [ ] A real OS/browser/GPU/display/font/network cohort is selected.
 - [ ] One identity manifest derives all configuration.
 - [ ] Hard constraints and soft heuristics are distinguished.
@@ -1731,6 +1783,14 @@ Live `main`, `tot`, registry, and specification URLs are verification entry poin
 - **[Cover Your Tracks](https://coveryourtracks.eff.org/):** tracker-blocking simulation and observed-cohort uniqueness.
 - **[TrackMe](https://github.com/pagpeter/TrackMe):** self-hostable origin-side TLS/header/H2 inspection starting point.
 
+### Declared identity and token standards
+
+- **[RFC 9421 — HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421):** the signing mechanism Web Bot Auth builds on; covers signature bases, `Signature-Input`, and key identification.
+- **[IETF Web Bot Auth working group](https://datatracker.ietf.org/group/webbotauth/):** charter and current documents. Check here first—this area moves faster than anything else cited in this handbook.
+- **[`draft-meunier-web-bot-auth-architecture`](https://datatracker.ietf.org/doc/draft-meunier-web-bot-auth-architecture/):** architecture for cryptographically identifying automated traffic. Internet-Draft; pin a revision.
+- **[`draft-meunier-http-message-signatures-directory`](https://datatracker.ietf.org/doc/draft-meunier-http-message-signatures-directory/):** public-key directory discovery via the `Signature-Agent` header. Internet-Draft.
+- **[RFC 9576 — Privacy Pass Architecture](https://www.rfc-editor.org/rfc/rfc9576.html)**, **[RFC 9577 — Privacy Pass HTTP Authentication Scheme](https://www.rfc-editor.org/rfc/rfc9577.html)**, and **[RFC 9578 — Privacy Pass Issuance Protocols](https://www.rfc-editor.org/rfc/rfc9578.html):** anonymous, unlinkable attestation tokens; the counterpart to identifying an operator.
+
 ### Security, policy, and responsible automation
 
 - **[OWASP Bot Management and Anti-Automation](https://cheatsheetseries.owasp.org/cheatsheets/Bot_Management_and_Anti-Automation_Cheat_Sheet.html):** defender’s layered model and automated-threat taxonomy. Some response tactics are context-specific; do not copy blindly.
@@ -1744,6 +1804,29 @@ Live `main`, `tot`, registry, and specification URLs are verification entry poin
 - **[GDPR full text](https://eur-lex.europa.eu/eli/reg/2016/679/oj)** and **[EDPB Article 5(3) guidance](https://www.edpb.europa.eu/documents/guideline/guidelines-22023-on-technical-scope-of-art-53-of-eprivacy-directive_en)**.
 - **[WCAG 2.2](https://www.w3.org/TR/WCAG22/):** accessible interaction and authentication requirements.
 - **[DOJ CFAA charging policy](https://www.justice.gov/jm/jm-9-48000-computer-fraud):** enforcement guidance and good-faith research definition; not statutory authorization.
+
+---
+
+## Refreshing this snapshot
+
+This document asserts dated, version-sensitive facts. Without a refresh procedure those assertions decay silently and the handbook becomes confidently wrong—the failure mode it warns about everywhere else. Re-run this checklist when the snapshot date is more than a quarter old and record the outcome in the header.
+
+**Mechanically verifiable—automate these:**
+
+- [ ] Every tool version in the stack table resolves against its registry (`registry.npmjs.org/<pkg>/latest`, `pypi.org/pypi/<pkg>/json`, GitHub releases). Record last-publish dates, not only version numbers; an abandoned project is itself a maintenance finding.
+- [ ] Current Chrome Stable and Chrome for Testing versions from [`last-known-good-versions.json`](https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json). Cohort examples must name a version that actually exists.
+- [ ] Every source-library URL returns 200. Distinguish hard 404s from bot-blocked 403s—several cited sites deliberately reject non-browser clients, which is a fact worth recording rather than a broken link.
+- [ ] Cited source line ranges in the case-study section still contain the quoted code at the pinned commit.
+- [ ] Citation titles still match their DOIs and arXiv identifiers.
+
+**Requires judgment—do these by hand:**
+
+- [ ] Re-measure the automation-signal claims against current Chromium source rather than trusting this document: `content/child/runtime_features.cc` for `AutomationControlled` wiring and `third_party/blink/renderer/core/frame/navigator.cc` for the `webdriver` member and its probe override.
+- [ ] Re-run the `isTrusted` spot-check on the current build and update both version and date, or delete the claim. A silently aging empirical claim is worse than no claim.
+- [ ] Re-check whether the transport baseline moved. Post-quantum key agreement and Encrypted ClientHello both change what an origin observes, so a JA3/JA4 baseline recorded before such a rollout will drift for reasons that have nothing to do with the automation stack. Treat unexplained protocol-fingerprint drift as a browser-release question before treating it as a regression.
+- [ ] Re-read the standards in the cooperative-identity material; that area moves faster than anything else here.
+
+**Provenance rule.** When updating a claim, replace its citation in the same edit. A claim whose source has moved is unverified, whatever its history in this file.
 
 ---
 
