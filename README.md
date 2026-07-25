@@ -453,6 +453,8 @@ Prefer an engine/driver behavior change that preserves WebIDL semantics, or leav
 
 The [WebDriver specification](https://www.w3.org/TR/webdriver2/) defines a user-agent-wide **webdriver-active flag**. `navigator.webdriver` returns that Boolean; creating a WebDriver session sets the flag and deleting the final session clears it. [WebDriver BiDi](https://www.w3.org/TR/webdriver-bidi/) adds bidirectional event transport but does not define a second JavaScript “BiDi” bit.
 
+The specification is candid about what this signal is worth. Its non-normative note says `navigator.webdriver` “[d]efines a standard way for co-operating user agents to inform the document that it is controlled by WebDriver,” and then adds: “It is acknowledged that this is complementary to the Evil Bit [RFC3514].” [RFC 3514](https://www.rfc-editor.org/rfc/rfc3514.html) is the April Fools' RFC in which attackers are asked to set a header bit announcing malicious intent. The standards body is saying plainly that a declared-automation flag only means anything among parties who choose to declare. Treat it accordingly: it is the correct thing to expose in cooperative automation and worthless as a defense, which is precisely why the cryptographic mechanisms below exist.
+
 As of the research snapshot, Chromium enables its Blink `AutomationControlled` feature for these launch paths:
 
 - `--enable-automation`;
@@ -493,6 +495,8 @@ Unified code removes many old differences, but headless still has environmental 
 - timing/resource differences.
 
 “Headful” under a dummy X server with software rendering is likewise not automatically a consumer desktop.
+
+One of those signals is now a first-class control rather than something to patch around. Since Chrome 142, headless uses a **virtual screen** independent of any physical display, configurable at launch with [`--screen-info`](https://developer.chrome.com/blog/screen-configuration-with-chrome-headless) (origin, size, scale factor, orientation, work area, and multiple displays) and mutable at runtime through CDP `Emulation.addScreen` and `Emulation.removeScreen`. Historically, degenerate headless screen geometry was a common contradiction, and the usual response was a JavaScript shim over `screen`—which the *Property semantics matter* section explains is the wrong layer. Configure the real screen instead, then measure it. This is the general pattern worth internalizing: when the browser grows a supported control for a surface, the shim for that surface becomes a liability rather than a shortcut.
 
 ### Chrome for Testing is reproducibility, not concealment
 
@@ -536,12 +540,21 @@ Primary repositories: [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patch
 
 Everything above concerns what an automated client *leaks*. A parallel line of standards work concerns what it can *assert*. For a handbook whose first rule is "cooperate when possible," this is the most important development to track, because it converts "prove you are not a bot" into "prove which bot you are"—a question authorized automation can actually answer.
 
-**Web Bot Auth** applies [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421) to automated traffic. The client signs outbound requests with a private key; the origin verifies the signature and learns a verified operator identity rather than guessing from fingerprints. As of the research snapshot the IETF has an active [`webbotauth` working group](https://datatracker.ietf.org/group/webbotauth/), and the two principal drafts are:
+**Web Bot Auth** applies [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421) to automated traffic. The client signs outbound requests with a private key; the origin verifies the signature and learns a verified operator identity rather than guessing from fingerprints. The IETF chartered a [`webbotauth` working group](https://datatracker.ietf.org/group/webbotauth/) (Web and Internet Transport area) for exactly this. The two principal documents are:
 
-- [`draft-meunier-web-bot-auth-architecture`](https://datatracker.ietf.org/doc/draft-meunier-web-bot-auth-architecture/) (rev 05, Informational, March 2026; Meunier/Cloudflare and Major/Google) — the overall model.
-- [`draft-meunier-http-message-signatures-directory`](https://datatracker.ietf.org/doc/draft-meunier-http-message-signatures-directory/) (rev 05) — how a verifier discovers an operator's public keys.
+- [`draft-meunier-webbotauth-httpsig-protocol`](https://datatracker.ietf.org/doc/draft-meunier-webbotauth-httpsig-protocol/) — the signing model.
+- [`draft-meunier-webbotauth-httpsig-directory`](https://datatracker.ietf.org/doc/draft-meunier-webbotauth-httpsig-directory/) — how a verifier discovers an operator's public keys.
 
-Mechanically, a signing agent sends `Signature` and `Signature-Input` per RFC 9421, plus a `Signature-Agent` header naming the FQDN that hosts its key directory. The verifier fetches that directory and checks the signature; `keyid` is a base64url JWK SHA-256 thumbprint, and Ed25519 is a supported algorithm. These are Internet-Drafts, not settled standards—header shapes and directory formats have already changed across revisions (the architecture draft carries explicit "legacy `Signature-Agent`" compatibility cases), so pin a revision and re-read before implementing.
+**Read the status carefully, because it is easy to overstate.** A working group exists, but as of the snapshot date *nothing has been adopted*: there is no `draft-ietf-webbotauth-*` document, and every draft above is still an individual submission carrying the usual "no formal standing" boilerplate. Both documents were also **renamed in mid-2026**—they replace `draft-meunier-web-bot-auth-architecture` and `draft-meunier-http-message-signatures-directory`, which now sit in datatracker state *Replaced*. Anything citing the old names is stale. Cite the version-less datatracker URL rather than a pinned revision, and re-read before implementing.
+
+Mechanically, a signing agent sends `Signature` and `Signature-Input` per RFC 9421 with `tag="web-bot-auth"`, plus a `Signature-Agent` header naming the host of its key directory. The directory is served from the well-known URI `/.well-known/http-message-signatures-directory` as a JWKS; `keyid` is a base64url JWK SHA-256 thumbprint ([RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html)) and Ed25519 is the algorithm in practice.
+
+Two traps worth knowing before writing code:
+
+- **`Signature-Agent` changed shape between drafts.** It was a bare structured string (`Signature-Agent: "https://signer.example"`) and became a dictionary keyed to the signature label (`Signature-Agent: sig="https://signer.example"`). Deployed verifiers do not all track the drafts, so the form that validates in production may be the older one. Test against the verifier you actually need, not against the newest draft.
+- **Sign the directory response itself.** Otherwise anyone can mirror your JWKS and enroll as you.
+
+A detail worth quoting to anyone arguing that standards bodies are building better detectors: the working group's charter puts "techniques for distinguishing non-participating bots from non-bot clients" explicitly *out of scope*. The IETF declined to standardize adversarial detection and standardized cooperative identification instead.
 
 **Privacy Pass** is the mirror-image mechanism and is genuinely standardized: [RFC 9576](https://www.rfc-editor.org/rfc/rfc9576.html) (architecture, Informational), [RFC 9577](https://www.rfc-editor.org/rfc/rfc9577.html) (HTTP authentication scheme), and [RFC 9578](https://www.rfc-editor.org/rfc/rfc9578.html) (issuance protocols), all June 2024. It lets a client present an anonymous, unlinkable token attesting that some issuer vouched for it, so an origin can reduce challenges without fingerprinting. Private Access Tokens are the best-known deployment. Privacy Pass attests *a property* without identifying the client; Web Bot Auth identifies *an operator* deliberately. They solve opposite halves of the same problem, and neither is an evasion technique.
 
@@ -584,6 +597,13 @@ network_identity = {
 ```
 
 JA3/JA4 identify implementation behavior probabilistically, not a person. Shared libraries collide; browser releases drift; TLS extension ordering changes; intermediaries replace the observed stack. Never use a fingerprint hash as authentication.
+
+**Two shipped changes make "a golden ClientHello" an untenable baseline.** Both are already default-on, so a fingerprint recorded before them is not comparable to one recorded after:
+
+- **Post-quantum key agreement.** Chrome 131 moved from hybrid Kyber to ML-KEM, changing the advertised group from X25519Kyber768 (`0x6399`) to X25519MLKEM768 (`0x11EC`). Chrome deliberately does not offer both at once—the key shares are too large—so this was a substitution, not an addition. See Google's [*A new path for Kyber on the web*](https://security.googleblog.com/2024/09/a-new-path-for-kyber-on-web.html). Any JA3/JA4 baseline captured before M131 is invalid, and the group list will move again as PQ deployment matures.
+- **Encrypted ClientHello.** [Enabled by default since Chrome 117](https://chromestatus.com/feature/6196703843581952) on desktop and Android. Server opt-in travels in an HTTPS DNS record, which means ClientHello shape is now partly a function of *the destination's DNS*, not only the client. The same browser can present different observable handshakes to different origins.
+
+The operational consequence: treat unexplained protocol-fingerprint drift as a browser-release or destination-configuration question **before** treating it as a regression in your own stack. Record the browser build alongside every captured fingerprint, or the capture cannot be interpreted later.
 
 ### Topology determines what the origin sees
 
@@ -1786,9 +1806,10 @@ Live `main`, `tot`, registry, and specification URLs are verification entry poin
 ### Declared identity and token standards
 
 - **[RFC 9421 — HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421):** the signing mechanism Web Bot Auth builds on; covers signature bases, `Signature-Input`, and key identification.
-- **[IETF Web Bot Auth working group](https://datatracker.ietf.org/group/webbotauth/):** charter and current documents. Check here first—this area moves faster than anything else cited in this handbook.
-- **[`draft-meunier-web-bot-auth-architecture`](https://datatracker.ietf.org/doc/draft-meunier-web-bot-auth-architecture/):** architecture for cryptographically identifying automated traffic. Internet-Draft; pin a revision.
-- **[`draft-meunier-http-message-signatures-directory`](https://datatracker.ietf.org/doc/draft-meunier-http-message-signatures-directory/):** public-key directory discovery via the `Signature-Agent` header. Internet-Draft.
+- **[IETF Web Bot Auth working group](https://datatracker.ietf.org/group/webbotauth/):** charter and current documents. Check here first—this area moves faster than anything else cited in this handbook, and draft names have already changed once.
+- **[`draft-meunier-webbotauth-httpsig-protocol`](https://datatracker.ietf.org/doc/draft-meunier-webbotauth-httpsig-protocol/):** signing model for cryptographically identifying automated traffic. Individual submission, not yet WG-adopted. Replaces `draft-meunier-web-bot-auth-architecture`.
+- **[`draft-meunier-webbotauth-httpsig-directory`](https://datatracker.ietf.org/doc/draft-meunier-webbotauth-httpsig-directory/):** public-key directory discovery via the `Signature-Agent` header. Replaces `draft-meunier-http-message-signatures-directory`.
+- **[RFC 7638 — JSON Web Key Thumbprint](https://www.rfc-editor.org/rfc/rfc7638.html):** the `keyid` construction used above.
 - **[RFC 9576 — Privacy Pass Architecture](https://www.rfc-editor.org/rfc/rfc9576.html)**, **[RFC 9577 — Privacy Pass HTTP Authentication Scheme](https://www.rfc-editor.org/rfc/rfc9577.html)**, and **[RFC 9578 — Privacy Pass Issuance Protocols](https://www.rfc-editor.org/rfc/rfc9578.html):** anonymous, unlinkable attestation tokens; the counterpart to identifying an operator.
 
 ### Security, policy, and responsible automation
