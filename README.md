@@ -10,9 +10,11 @@
 
 “Antidetection” is informal industry jargon, not a Web standard and not a promise of invisibility. In this handbook it means:
 
-> **Build an authorized browser client whose network, protocol, browser, rendering, profile, and interaction signals are internally coherent; remove accidental framework artifacts; measure drift; and stop rather than evade when a site denies or challenges the automation.**
+> **Build an authorized browser client whose network, protocol, browser, rendering, profile, and interaction signals are internally coherent; remove framework artifacts only where expressly authorized; measure drift; and stop rather than evade when a site denies or challenges the automation.**
 
-This is deliberately narrower than defeating bot controls. It does **not** authorize CAPTCHA solving, credential abuse, fake engagement, account farming, quota evasion, bypassing access controls, or rotating identities after a denial. Use it on systems you own, systems that expressly permit the work, or engagements with written authorization. Legal notes are informational, not legal advice.
+This is deliberately narrower than defeating bot controls. It does **not** authorize CAPTCHA solving, credential abuse, fake engagement, account farming, quota evasion, bypassing access controls, or rotating identities after a denial. Use it on systems you own, systems that expressly permit the method as well as the work, or engagements with written authorization. Legal notes are informational, not legal advice.
+
+**Authorization is method-specific.** Permission to access a site, account, or API does not by itself authorize concealing automation status from third-party bot controls. Suppressing standard automation signals, patching control artifacts, or generating human-like input against those controls requires express permission from the site or system owner. Without it, use truthful WebDriver state, cooperative allowlisting, or an official API. Stopping on a challenge is a minimum safeguard—not permission to evade controls until a challenge appears.
 
 The document is intentionally self-contained. Linked sources establish provenance, expose version-sensitive details, and provide deeper verification; reading them should not be required to understand the implementation model here.
 
@@ -90,7 +92,7 @@ Treat the client as a **constraint graph**. Nodes are observable values; edges e
 6. **Configure before first navigation.** Early requests, workers, service workers, and origin state can escape late patches.
 7. **Measure at every layer.** Capture what the origin receives, what scripts observe, and what changes across restarts/releases.
 8. **Treat patches as liabilities with tests.** A patch may remove one artifact while creating semantic, security, or maintenance drift.
-9. **Stop on policy signals.** A challenge, policy `403`, repeated verification, or authorization failure is a handoff/stop state—not a prompt to rotate and retry.
+9. **Stop on policy signals.** A challenge, policy `403`, repeated challenge or step-up outside the documented authentication flow, or authorization failure is a stop state—not a prompt to rotate and retry.
 
 ---
 
@@ -292,7 +294,7 @@ These are related but not identical:
 - geolocation is permission-gated and can legitimately differ from IP location.
 - IP geolocation is approximate; travel, VPNs, corporate networks, mobile carriers and anycast create normal mismatches.
 
-Treat alignment as a probabilistic constraint, not a law. Reject absurd combinations, but do not demand an exact city. Use valid BCP 47 language tags and IANA timezone identifiers. Keep the OS timezone, browser context timezone, date offset, and Intl output coherent. A fabricated coordinate with implausibly perfect accuracy is worse than denying geolocation when the workflow does not need it.
+Treat alignment as a probabilistic constraint, not a law. Reject absurd combinations, but do not demand an exact city. Use valid BCP 47 language tags and IANA timezone identifiers. Keep the OS timezone, browser context timezone, date offset, and Intl output coherent. Deny geolocation when the workflow has no real device fix or does not need it. Fabricated coordinates are appropriate only as declared emulation in an owned test scenario—not to manufacture third-party identity coherence.
 
 ### Screen, viewport, DPR, media queries, and input capabilities
 
@@ -430,7 +432,7 @@ A detector or compatibility test can inspect:
 - whether the WebIDL member exists at all;
 - relationships to launch and protocol behavior.
 
-Prefer an engine/driver behavior change that preserves WebIDL semantics, or leave the standard signal truthful in cooperative automation.
+Prefer an engine/driver behavior change that preserves WebIDL semantics, or leave the standard signal truthful in cooperative automation. `navigator.webdriver` is an intentional, specification-defined automation signal—not an accidental artifact. Suppressing or falsifying it to defeat third-party bot controls without the owner’s express consent is evasion, not compatibility cleanup.
 
 ---
 
@@ -476,7 +478,7 @@ Since Chrome 136, regular Chrome ignores remote-debugging switches against its d
 
 CDP’s [`Runtime.enable`](https://chromedevtools.github.io/devtools-protocol/tot/Runtime/) reports execution contexts and forwards Runtime events. Playwright and Puppeteer have historically enabled it during page initialization. That can alter object preview/serialization and expose framework worlds or source names.
 
-The once-popular detector that logs an `Error` with a custom `stack` getter relied on console serialization invoking that getter. V8 changes in May 2025 guarded user-defined getters, so the classic snippet is not reliable on current Chrome. Opening genuine DevTools can also produce CDP effects. Treat every CDP probe as a versioned hypothesis with false positives—not folklore carved into a detector.
+The once-popular detector that logs an `Error` with a custom `stack` getter relied on console serialization invoking that getter. V8’s May 2025 changes to prevent side effects during [object preview](https://chromium.googlesource.com/v8/v8/+/61a907540d4c1dda4733476e54c977910f31041d) and [error preview](https://chromium.googlesource.com/v8/v8/+/e08e97347454255a337dcea361808fb25ca09077) guarded user-defined getters, so the classic snippet is not reliable on current Chrome. Opening genuine DevTools can also produce CDP effects. Treat every CDP probe as a versioned hypothesis with false positives—not folklore carved into a detector.
 
 Current examples worth measuring rather than assuming:
 
@@ -506,11 +508,11 @@ Primary repositories: [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patch
 
 ### Choosing a stack
 
-Use the least invasive stack that meets the authorized requirement:
+Use the least invasive stack that meets the authorized requirement. Tiers 3 and 4 require the site or system owner’s express consent to conceal automation status; permission merely to access the system is insufficient.
 
 1. **Cooperative QA:** upstream Playwright/Selenium/Puppeteer, truthful webdriver state, test-side allowlisting.
 2. **Browser-fidelity research:** stock browser attached with controlled CDP/WebDriver and a measured, isolated environment.
-3. **Artifact regression research:** a narrowly scoped framework patch, quarantined and compared with upstream.
+3. **Artifact regression research:** a narrowly scoped framework patch, quarantined and compared with upstream through conformance plus selector/shadow-DOM regression tests.
 4. **Source-patched browser:** only when a full browser build, security-update pipeline, conformance suite, supply-chain review, and rollback are funded.
 
 Do not stack several stealth libraries blindly. Their assumptions can conflict.
@@ -620,7 +622,7 @@ In the page record language, Intl timezone, geolocation permission/result, and I
 
 The [DOM specification](https://dom.spec.whatwg.org/#dom-event-istrusted) initializes constructed/dispatched events as untrusted. [WebDriver Actions](https://w3c.github.io/webdriver/#actions) require trusted events. CDP documents browser-level [`Input`](https://chromedevtools.github.io/devtools-protocol/tot/Input/) commands but does not make a cross-browser normative promise about trust.
 
-A current Chrome spot-check found:
+A 2026-07-25 spot-check with Chrome `150.0.7871.187` found:
 
 - `dispatchEvent()` and page-level `element.click()` → `isTrusted === false`;
 - CDP mouse/key input → `true`;
@@ -717,6 +719,11 @@ limits:
   max_actions: 200
   session_ttl_seconds: 900
 retry:
+  require_idempotency_class: true
+  allowed_operation_classes:
+    - read_only
+    - idempotent
+    - mutation_with_service_idempotency_key
   max_attempts: 3
   deadline_seconds: 60
   base_ms: 500
@@ -945,7 +952,7 @@ async function classifyResponse(response: Response): Promise<Outcome> {
 }
 ```
 
-These helpers are defense in depth, not a navigation guard: enforce the origin allowlist independently at the browser routing layer and a fail-closed network boundary, including redirects, popups, frames, workers, service workers, and browser-initiated traffic. A site-specific challenge detector must return `stopped`; it must not hand a third-party challenge to an operator, select a new proxy/profile, or retry. Owned applications should use authorized test hooks or test keys instead.
+These helpers are defense in depth, not a navigation guard: enforce the origin allowlist independently at the browser routing layer and a fail-closed network boundary, including redirects, popups, frames, workers, service workers, and browser-initiated traffic. The example intentionally stops on `401`; an expressly authorized reauthentication workflow should start separately rather than turning the failed request into an automatic retry. A site-specific challenge detector must return `stopped`; it must not hand a third-party challenge to an operator, select a new proxy/profile, or retry. Owned applications should use authorized test hooks or test keys instead.
 
 ### Bounded, replayable UI motion for QA
 
@@ -1003,6 +1010,7 @@ Guidelines:
 - install the font corpus the selected OS cohort should expose, not every package available;
 - pair browser and driver versions;
 - run as an unprivileged user and retain browser sandboxing whenever the environment supports it;
+- at container runtime, drop unnecessary capabilities, use a default-or-stricter seccomp/AppArmor/SELinux policy, restrict mounts and egress, and avoid privileged mode;
 - do not copy `--no-sandbox` from container examples without an equivalent isolation boundary;
 - provide actual audio/display services when the cohort claims them;
 - pin globally installed automation packages too, not only Chrome;
@@ -1015,6 +1023,7 @@ Run this only at an owned diagnostic origin. It intentionally gathers data that 
 ```js
 async function browserObservation() {
   const uaData = navigator.userAgentData;
+  // LAB ONLY: identifying high-entropy values; never forward raw output to general telemetry.
   const highEntropy = uaData?.getHighEntropyValues
     ? await uaData.getHighEntropyValues([
         'architecture', 'bitness', 'fullVersionList',
@@ -1056,8 +1065,11 @@ async function browserObservation() {
       width: screen.width, height: screen.height,
       availWidth: screen.availWidth, availHeight: screen.availHeight,
       colorDepth: screen.colorDepth,
-      dpr: devicePixelRatio,
-      innerWidth, innerHeight, outerWidth, outerHeight,
+      dpr: window.devicePixelRatio,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      outerWidth: window.outerWidth,
+      outerHeight: window.outerHeight,
     },
     input: {
       maxTouchPoints: navigator.maxTouchPoints,
@@ -1190,12 +1202,12 @@ test('shared system surfaces agree across contexts', async ({ page, context }) =
   const keys = Object.keys(observations.page) as Array<keyof ReturnType<typeof shared>>;
   for (const key of keys) {
     const values = Object.values(observations).map(value => JSON.stringify(value[key]));
-    expect(new Set(values), `${String(key)}: ${JSON.stringify(observations)}`).toHaveSize(1);
+    expect(new Set(values).size, `${String(key)}: ${JSON.stringify(observations)}`).toBe(1);
   }
 });
 ```
 
-In production code, type the observation map explicitly and account for unsupported fields. Also assert cross-layer relationships: HTTP/JS language, UA/UA-CH/browser build, screen/DPR arithmetic, GPU cohort, protocol signature, and stable network lease.
+The shared probe deliberately contains only fields exposed across the tested realms; keep page-only surfaces such as `webdriver`, permissions, screen, and DOM APIs in context-specific probes. In production code, type the observation map explicitly and normalize unsupported fields. Also assert cross-layer relationships: HTTP/JS language, UA/UA-CH/browser build, screen/DPR arithmetic, GPU cohort, protocol signature, and stable network lease.
 
 ### Metrics
 
@@ -1265,15 +1277,15 @@ Do not export raw IPs, headers, UA strings, URLs, cookies, fingerprints, canvas/
 
 ## What Kernel’s public image repo implements
 
-This section is a source audit of the public repository at commit [`3be26fcbcdbed7e615d57217ee8db8f9dac00ee3`](https://github.com/kernel/kernel-images/tree/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3). It does not claim visibility into Kernel’s hosted control plane or private image layers.
+This section is a source audit of the public repository at commit [`3be26fcbcdbed7e615d57217ee8db8f9dac00ee3`](https://github.com/kernel/kernel-images/tree/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3). It does not claim visibility into Kernel’s hosted control plane or private image layers. Inclusion is descriptive, not endorsement: automation-signal suppression and humanized-input features are dual-use, require express owner consent when aimed at third-party controls, and do not prove fidelity or undetectability.
 
 ### Implemented primitives
 
 | Primitive | Public implementation | What it provides |
 |---|---|---|
-| Headless launch hardening | [`server/cmd/wrapper/chromium.go#L8-L61`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/wrapper/chromium.go#L8-L61) | A default list explicitly called “headless+stealth”: `Accept-Language`, pointer/hover Blink settings, `--disable-blink-features=AutomationControlled`, disabled `AcceptCHFrame`, SwiftShader/ANGLE and many stability/performance flags. |
+| Headless launch hardening | [`server/cmd/wrapper/chromium.go#L8-L61`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/wrapper/chromium.go#L8-L61) | A default list explicitly called “headless+stealth”: `--accept-lang=en-US,en` (which sets `Accept-Language`), pointer/hover Blink settings, `--disable-blink-features=AutomationControlled`, disabled `AcceptCHFrame`, SwiftShader/ANGLE and many stability/performance flags. |
 | Default scope | [`server/cmd/wrapper/main.go#L93-L97`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/wrapper/main.go#L93-L97) | The default stealth list is applied only for the headless profile and only when `CHROMIUM_FLAGS` is empty. Headful defaults are caller-supplied. |
-| Browser launcher | [`server/cmd/chromium-launcher/main.go#L48-L100`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/chromium-launcher/main.go#L48-L100) | Merges base/runtime flags, uses a persistent `/home/kernel/user-data`, a configurable internal remote-debugging port (default `9223`), and unified `--headless=new` for headless. |
+| Browser launcher | [`server/cmd/chromium-launcher/main.go#L48-L100`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/cmd/chromium-launcher/main.go#L48-L100) | Merges base/runtime flags, uses a persistent `/home/kernel/user-data`, a configurable internal remote-debugging port (default `9223`), and unified `--headless=new` for headless. It also forces `--remote-allow-origins=*`; the CDP endpoint must remain private or behind authenticated, authorized transport. |
 | Version-paired browser/driver | [headful Dockerfile](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headful/Dockerfile#L286-L303), [headless Dockerfile](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headless/image/Dockerfile#L168-L185) | Selects Chrome for Testing `148.0.7778.97` and the same-version ChromeDriver; downloads are not digest-verified here, so this is version pairing rather than a fully reproducible supply chain. |
 | Patchright default for in-image Playwright execution | [`server/runtime/playwright-daemon.ts#L15-L20`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/runtime/playwright-daemon.ts#L15-L20), [`#L90-L105`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/server/runtime/playwright-daemon.ts#L90-L105) | `/playwright/execute` selects Patchright unless `PLAYWRIGHT_ENGINE=playwright-core`, then attaches over CDP. |
 | Font normalization | [`images/chromium-headful/Dockerfile#L203-L234`](https://github.com/kernel/kernel-images/blob/3be26fcbcdbed7e615d57217ee8db8f9dac00ee3/images/chromium-headful/Dockerfile#L203-L234) | Installs a broad Ubuntu-style font set specifically because a minimal container was a reCAPTCHA/fingerprinting signal. |
@@ -1302,10 +1314,11 @@ Relevant intent is also visible in snapshot ancestry: `cba3f77` added fonts afte
 10. **A fixed persistent profile is useful but sensitive.** It needs single ownership, encryption/access controls and explicit account/egress lifecycle outside this repo.
 11. **The managed policy denies geolocation by default.** Regional identity alignment would require authorized runtime policy/context configuration.
 12. **`--no-sandbox` appears in the headless default.** That is a container/isolation tradeoff, not an antidetection technique, and should not be copied into less isolated deployments.
+13. **The launcher forces `--remote-allow-origins=*`.** This relaxes the WebSocket origin check; exposing the debugging port is a control-plane vulnerability, not a fingerprint issue. Keep it on a private boundary or front it with authenticated, authorized transport.
 
 ### Bottom line
 
-The public repo implements a meaningful **image/runtime foundation**: real Chrome, same-version browser/driver pairing, headless automation-flag suppression, Patchright for one execution path, a more realistic headful font corpus, persistent state, proxy plumbing, and humanized input APIs. It does **not** publicly implement a complete, cross-layer antidetection product. The missing system is the identity compiler, full network policy, realm-complete browser behavior, cohort regression harness, and operational authorization/profile/account lifecycle described in this handbook.
+The public repo contains several **image/runtime primitives**: real Chrome, same-version browser/driver pairing, headless automation-flag suppression, Patchright for one execution path, a more realistic headful font corpus, persistent state, proxy plumbing, and humanized input APIs. This inventory is not a recommendation to use signal suppression or input simulation against third-party controls. It does **not** publicly implement a complete, cross-layer antidetection product. The missing system is the identity compiler, full network policy, realm-complete browser behavior, cohort regression harness, and operational authorization/profile/account lifecycle described in this handbook.
 
 ---
 
