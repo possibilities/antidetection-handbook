@@ -24,7 +24,7 @@ So the available work splits into three piles.
 2. **Coherence bugs worth fixing on their own merits.** Mixed input provenance (§3.1), identifying page globals (§3.2), no identity manifest (§3.3), and a UA override that changes the string but not the Client Hints (§3.4). All four are defects regardless of detection; §3.4 currently leaves a client *worse off* than not using the flag.
 3. **Suppressing truthful automation signals.** Requires the site owner's express permission per the handbook's own rules. Because this is already reachable, the work here is adding a gate and retiring the help-text recommendation — not building a feature (§5).
 
-The cascade the project wants is a good idea, but it has to select on **capability**, not on **enforcement**. §4 works through that distinction and the cases where it genuinely blurs.
+The cascade the project wants is a good idea, but §4 argues it should be inverted: select tiers from **declared task requirements** up front rather than promoting in response to **observed failures**. The reason is that "the tier couldn't do the work" and "the origin refused us" are indistinguishable from the outside — you see a failure and infer a cause — so a failure-driven cascade sorts on something nobody can actually observe. Requirements are observable; causes of failure are not.
 
 ---
 
@@ -78,7 +78,7 @@ The `--remote-debugging-port=0` choice deserves emphasis because it is easy to m
 
 `cli/src/native/cdp/lightpanda.rs` targets Lightpanda, which is not Chromium. It speaks enough CDP to drive, but it is a different engine with a different JavaScript runtime, no Blink rendering, and no Chrome TLS stack.
 
-For detection purposes this is the **least** disguisable backend, and that is fine — it is a speed/cost play for content extraction where nobody is asking whether you are a browser. Treat it as a separate cohort with its own expectations rather than as a Chrome substitute. §4.1 promotes from here to Chrome as tier 0 → 1, which is the right behavior; the caveat is on the *results*, not the promotion. Output gathered under Lightpanda and output gathered under Chrome are different measurement conditions, so record which tier produced a given result rather than treating the pair as interchangeable.
+For detection purposes this is the **least** disguisable backend, and that is fine — it is a speed/cost play for content extraction where nobody is asking whether you are a browser. Treat it as a separate cohort with its own expectations rather than as a Chrome substitute. §4.1 selects Chrome over Lightpanda whenever a job declares it needs JS, which is the right behavior; the caveat is on the *results*, not the selection. Output gathered under Lightpanda and output gathered under Chrome are different measurement conditions, so record which tier produced a given result rather than treating the pair as interchangeable.
 
 ### 2.3 WebDriver backend
 
@@ -189,28 +189,39 @@ Anyone who reaches for `--user-agent` today gets a client that contradicts itsel
 
 ## 4. The cascade
 
-The proposal is a system that starts with the most agent-browser-native approach and falls back toward heavier, more faithful backends. That is a good architecture. Everything depends on what triggers the fallback.
+The proposal is a system that starts with the most agent-browser-native approach and falls back toward heavier, more faithful backends. That is a good architecture. Everything depends on what triggers the fallback — and the first thing to notice is that the trigger you want is not usually available to you.
 
-### 4.1 Capability cascade — build this
+**"Capability failure" and "enforcement" are not properties of the observation.** They are facts about the origin's internal state, and you never see that state. You see a failure and infer a cause. A blank page, a missing selector, and a navigation timeout are each produced by both an ordinary SPA and a bot control, and nothing in the response distinguishes them reliably. So a cascade that classifies *observed failures* is asking engineers to sort on something they cannot see, and §4.3's "when ambiguous, do not promote" rule then eats most of the cases — which, if failure-driven promotion were the only mechanism, would collapse the whole design into "never promote."
 
-Select the cheapest backend that can actually do the job, and promote when the *work* fails:
+The way out is to notice which triggers *are* unambiguous. "This job needs WebGL" is knowable before you run anything: it is a property of the task, not an inference from a failure. So is "this job needs a persistent login," "this needs a regional egress," "this needs an extension." Requirements are observable; causes of failure are not.
+
+**So select tiers from declared task requirements, and treat failures as diagnostics rather than as promotion triggers.** This inverts the usual design and is the single most important structural recommendation in this document. It also happens to be faster: requirement-driven selection reaches the right tier on the first attempt instead of walking up the ladder.
+
+### 4.1 Requirement-driven tier selection — build this
+
+Each tier declares what it can do. A job declares what it needs. Selection is a match, computed before launch:
 
 ```text
 Tier 0  Lightpanda / no-JS extraction
-          promote on: JS-dependent content, missing DOM, render mismatch
+          provides: HTTP fetch, static content, no JS execution
 
 Tier 1  Native CDP + headless Chrome, SwiftShader
-          promote on: WebGL/canvas/video requirement, layout depends on GPU,
-                      font/emoji rendering matters, extension required
+          provides: JS execution, DOM, software canvas/WebGL, ephemeral profile
 
 Tier 2  Native CDP + headful Chrome, real display, hardware GPU, full font corpus
-          promote on: needs a stable regional egress or a persistent profile
+          provides: hardware rendering, extensions, real font metrics,
+                    persistent profile, compositor-dependent layout
 
-Tier 3  Remote provider (Kernel et al.) with a managed environment
-          promote on: needs an environment the local host cannot provide
+Tier 3  Remote provider (Kernel et al.), managed environment
+          provides: an environment the local host cannot supply
+                    — see §4.3, this tier also changes identity
 ```
 
-Every promotion here answers "the previous tier **could not do the work**." Those triggers are observable, loggable, and defensible. They are also exactly the triggers that make the system faster and cheaper, because tier 0 handles the majority of real work.
+A job declaring `needs: [js, persistent-login]` selects tier 2 directly. A job declaring nothing starts at tier 0. The requirement list is a small, auditable artifact that belongs in the identity manifest (§3.3), and writing it down is most of the work — it forces the caller to say what the task actually needs instead of discovering it by failure.
+
+**Failure-driven promotion still has a narrow, guarded place**, because requirements are sometimes discovered rather than known: a page turns out to need JS that the caller did not anticipate. Permit it only where the evidence is *positive and structural* rather than an absence — the response body contains script tags and a mount point, so the content is demonstrably JS-rendered — and never on a bare absence like "empty result" or "selector missing," which is precisely what a challenge also produces. Everything else is a stop-and-diagnose, per §4.3.
+
+Note what this buys beyond correctness: the ambiguity problem does not arise for the majority of jobs, because they never fail in the first place. Requirement-driven selection is not just safer than failure-driven promotion, it is the faster architecture.
 
 ### 4.2 Enforcement cascade — do not build this
 
@@ -256,6 +267,8 @@ Treat unexplained lower-tier failure as a **stop-and-log**, not an automatic pro
 
 The obvious escape hatch — record the rendering requirement in per-origin policy, then let the promotion happen because it was *decided* rather than *attempted* — has a hole in it, and it is worth closing explicitly because it is the hatch this document recommends. The operator's only available basis for that policy entry is usually "headful worked and headless didn't," which is the same enforcement observation with a human inserted to relabel it. A human in the loop launders the evidence; it does not change it. So require the entry to cite evidence **independent of the failure that prompted it** — a documented WebGL or video requirement, an authorization record, an operator-owned origin — and to name that evidence in the policy file. If the only justification is "the lower tier got blocked," that is not a capability finding no matter who writes it down.
 
+Be honest about the consequence: for headless-versus-headful specifically, that evidence will usually not exist. There is rarely an independent way to establish that an arbitrary third-party site *requires* a compositor. **That is the intended outcome, not a gap in the rule.** The requirement functions as a near-total ban on headless→headful promotion against origins you do not own, and it should — because in the cases where you cannot produce independent evidence, detection is the likeliest explanation, which is exactly when you must not promote.
+
 **A 403 that is not a bot control.** Geo-restriction, expired credentials, and genuinely missing authorization all return 403, and only some are bot controls. Do not build a classifier that tries to tell them apart in order to decide whether to keep going. Default 403 to `STOP` and let the per-origin policy carve out the known-benign cases explicitly. A conservative default that occasionally halts a legitimate job is recoverable; a permissive default that occasionally evades enforcement is not.
 
 The asymmetry with the challenge classifier above is deliberate, not a contradiction: build one, don't build the other. A challenge classifier's only output is `STOP`, so its errors fail safe. A 403 classifier's output is permission to continue, so its errors fail toward proceeding against an origin that refused. Build classifiers whose failure mode is halting.
@@ -266,17 +279,27 @@ Draw the line by what changes rather than by which tier you are entering: a prom
 
 **Enforcement disguised as a transient error.** The table treats timeouts, connection resets, and transport errors as retryable, which is correct in general and exploitable in particular: a bot control that drops connections or serves a 503 is indistinguishable from a flaky network at the single-request level. The distinguishing feature is not the individual failure but its *distribution* — enforcement concentrates on one origin while the rest of the fleet is healthy. Borrow the handbook's circuit breaker: track transient-failure rate per origin, and when it exceeds a threshold, escalate to the stop path rather than continuing to retry. A retry budget that is per-request rather than per-origin will happily grind against an origin that has already decided to refuse you.
 
-**Learned tier preferences are the known-detector table, rediscovered.** The obvious optimization once a cascade exists is to remember which tier worked for which origin and start there next time. That is a pure win when the reason was capability. When the reason was detection, a cache of "origin X needs tier 3" is exactly the pre-classification §4.4 rejects — assembled by the system rather than by a person, which makes it harder to notice and no different in effect. If you build tier memoization, key it on the *recorded reason* for the promotion and refuse to memoize anything whose reason was unexplained or enforcement-adjacent. This is the strongest argument for logging a structured reason on every promotion: without one, you cannot implement this rule, and the cache silently becomes the thing you said you would not build.
+**Learned tier preferences are the known-detector table, rediscovered.** The obvious optimization once a cascade exists is to remember which tier worked for which origin and start there next time. That is a pure win when the reason was capability. When the reason was detection, a cache of "origin X needs tier 3" is exactly the pre-classification §4.5 rejects — assembled by the system rather than by a person, which makes it harder to notice and no different in effect. If you build tier memoization, key it on the *recorded reason* for the promotion and refuse to memoize anything whose reason was unexplained or enforcement-adjacent. This is the strongest argument for logging a structured reason on every promotion: without one, you cannot implement this rule, and the cache silently becomes the thing you said you would not build.
 
 The general principle: **when the trigger is ambiguous, the cascade must not promote.** Ambiguity resolving toward "try harder" is the failure mode, and it produces no error message and no log line unless you build one.
 
-### 4.4 The "known detectors" idea
+### 4.4 What "stop" has to mean, or nobody will honor it
+
+A rule that only says *stop* will be removed by the first engineer whose job needs doing. If the cascade halts and the caller simply gets a failure, the pressure to add "just one more tier" is enormous and eventually irresistible — so the stop path needs a destination, not just a brake.
+
+Make `STOP` produce a **diagnostic and a decision point**, not a dead end: what was attempted, at which tier, what was observed, why it was classified as enforcement rather than capability, and what an operator's options are. Those options are legitimate and worth enumerating in the output, because they are what makes the boundary survivable — request access or an API key from the origin; use an official API if one exists; run against an owned staging instance instead; confirm the origin is in scope at all; or decide the job should not run.
+
+This is also where the handbook's human-in-the-loop boundary sits, and it is narrower than it first looks. A human deciding *whether to seek authorization* is an ordinary business decision and entirely appropriate. A human being handed the challenge to solve so the automation can continue is the thing both documents prohibit. The difference is whether the person is exercising judgment about the engagement or acting as a CAPTCHA-solving subroutine.
+
+Designed this way, the stop-state stops being the component everyone routes around.
+
+### 4.5 The "known detectors" idea
 
 Pre-classifying sites by which bot-control vendor protects them, in order to pre-select a stealthier tier, is enforcement evasion with the enforcement step cached. It moves the decision earlier in time; it does not change what the decision is. The same table applies.
 
 There is a legitimate version of site-specific configuration, and it is worth building instead: a per-origin policy table recording **authorization** — which origins the operator owns or has written permission to automate, which credentials and rate limits apply, which are API-first, and which are simply out of scope. That table makes the system safer and is exactly what `policy.rs` is already shaped for.
 
-### 4.5 Where this plugs in
+### 4.6 Where this plugs in
 
 `cli/src/native/policy.rs` already has the right primitive: an `ActionPolicy` returning `Allow`, `Deny`, or `RequiresConfirmation`, loaded from JSON, with an `AGENT_BROWSER_CONFIRM_ACTIONS` env override. Today it gates *actions*. Extend the same mechanism to gate origins and tier promotions, and the cascade gets an auditable policy layer instead of scattered conditionals.
 
@@ -356,9 +379,9 @@ Run these per Chrome release. Every version-specific claim in this document is a
 7. Build the origin-side measurement harness (§6), covering all five cohorts including `read` — everything after this is guesswork without it.
 8. Introduce the identity manifest (§3.3) — the structural prerequisite for the cascade and for item 3's fix.
 9. Reconsider the throwaway-profile default (§2.1) — persistent profiles are supported but off, and a perpetually-new browser is a louder signal than anything in §3.
-10. Build the capability cascade (§4.1) with the stop-state (§4.2) and the tier-3 identity/horsepower split (§4.3) present from the first commit.
+10. Build requirement-driven tier selection (§4.1) with the stop-state (§4.2), the tier-3 identity/horsepower split (§4.3), and a diagnostic stop path (§4.4) present from the first commit.
 11. Add headful/hardware-GPU and font-cohort tiers (§5) — the largest fidelity gain.
-12. Extend `policy.rs` to per-origin authorization, and gate the suppression flags behind it (§4.5, §5).
+12. Extend `policy.rs` to per-origin authorization, and gate the suppression flags behind it (§4.6, §5).
 13. Track Web Bot Auth (§5); prototype signing on `read` first, since it has no browser stack to reconcile.
 
 Items 1-5 are worth doing regardless of any position on detection, which is why they come first: they need no policy decision to justify them.
