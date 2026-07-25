@@ -272,11 +272,11 @@ The first three are documented flags today (§2.1), with the suppression flag us
 
 ### The declared-identity alternative
 
-For an agent product specifically, the ceiling on evasion is falling while the ceiling on declaration is rising. The IETF now has an active [`webbotauth` working group](https://datatracker.ietf.org/group/webbotauth/); [`draft-meunier-web-bot-auth-architecture`](https://datatracker.ietf.org/doc/draft-meunier-web-bot-auth-architecture/) (Cloudflare and Google, rev 05) applies [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421) so an automated client can *sign* its requests and be recognized as a known operator rather than guessed at.
+For an agent product specifically, the ceiling on evasion is falling while the ceiling on declaration is rising. The IETF chartered a [`webbotauth` working group](https://datatracker.ietf.org/group/webbotauth/), and [`draft-meunier-webbotauth-httpsig-protocol`](https://datatracker.ietf.org/doc/draft-meunier-webbotauth-httpsig-protocol/) applies [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421) so an automated client can *sign* its requests and be recognized as a known operator rather than guessed at.
 
 For agent-browser this is a plausible product feature, not just a standards note: an operator-level signing key, a hosted key directory, and a `Signature-Agent` header would let cooperating origins grant access *because* it is an agent. Sites increasingly want to distinguish "an agent acting for a real user with a real account" from anonymous scraping, and they cannot do that if every agent looks like a browser pretending not to be one.
 
-These are Internet-Drafts and the header shapes have already changed across revisions — pin a revision and re-read before implementing. But this is the direction to watch, and it is strictly better positioned than an evasion arms race the project cannot win against every vendor simultaneously.
+Calibrate the timeline honestly: the working group exists, but nothing has been adopted yet — there is no `draft-ietf-webbotauth-*` document, and the drafts were renamed once already in mid-2026. The `Signature-Agent` header has changed shape across revisions, so deployed verifiers and current drafts do not necessarily agree. This is a "track it and prototype" item, not a "ship it this quarter" item. But it is the direction to watch, and it is strictly better positioned than an evasion arms race the project cannot win against every vendor simultaneously.
 
 ---
 
