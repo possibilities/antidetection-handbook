@@ -14,9 +14,13 @@ Claims cite `path:line`. Where the answer is "this does not exist," it says so �
 
 agent-browser's native backend is **not** trying to hide, and currently could not hide if it wanted to. It launches Chrome with `--remote-debugging-port=0`, which sets Chromium's `AutomationControlled` runtime feature, which makes `navigator.webdriver` return `true`. Add `--headless=new`, `Runtime.enable`, and a fresh throwaway profile on every launch, and any site that looks at all sees automation.
 
-On Linux and in CI the picture is starker still — software rendering and a container font corpus put a recognizable cohort on top of the automation signals. On a developer's macOS or Windows machine it is milder: the SwiftShader routing is Linux-gated (`cfg!(target_os = "linux")` at `chrome.rs:418`), so those hosts keep hardware Metal/D3D backends and the real OS font corpus.
+In GPU-less containers and CI the picture is starker still — software rendering and a thin container font corpus add a recognizable cohort on top of the automation signals. On a developer's own machine it is milder: the SwiftShader *routing* is gated on `options.webgpu && cfg!(target_os = "linux")` (`chrome.rs:418`), so a macOS or Windows host keeps hardware Metal/D3D and the real OS font corpus. What every headless launch gets is the permissive `--enable-unsafe-swiftshader`, which changes nothing where a working GPU exists.
 
-That is a defensible default. What complicates the picture is that the *defaults* are honest while the *configuration surface* is not: `--args`, `--init-script`, and `--user-agent` already let anyone suppress those signals, the help text uses `--disable-blink-features=AutomationControlled` as its worked example, and the plugin protocol ships a `navigator.webdriver` shim as a test vector (§2.1). Nothing gates any of it.
+That is a defensible default — for the **local Chrome path**. The picture changes twice over.
+
+First, the configuration surface is not honest even locally: `--args`, `--init-script`, and `--user-agent` let anyone suppress those signals, the help text uses `--disable-blink-features=AutomationControlled` as its worked example, and the plugin protocol ships a `navigator.webdriver` shim as a test vector (§2.1). Nothing gates any of it.
+
+Second, and more importantly: **the Browserless provider requests stealth by default.** `BROWSERLESS_STEALTH` defaults to `true` (`providers.rs:325-327`) and is sent in every session-creation body, and the Kernel provider defaults to the headless profile that carries Kernel's stealth flag list (§2.4). Both are documented product features — `KERNEL_STEALTH`'s own documentation reads "Enable stealth mode to avoid bot detection." So "agent-browser is honest by default" is true of the native backend and false of at least one provider path, and a user reaching a remote provider gets signal suppression without ever typing the word.
 
 So the available work splits into three piles.
 
@@ -44,7 +48,9 @@ The cascade the project wants is a good idea, but §4 argues it should be invert
 | `--proxy-server=…`, `--proxy-bypass-list=…` | `chrome.rs:460, 464` | Chromium-native proxying, so browser TLS is preserved through a `CONNECT` tunnel. |
 | `--ignore-certificate-errors` | `chrome.rs:482` | Conditional, but a real risk if it is ever on by default. |
 
-There is no stealth flag in the **defaults**. But the repo does ship a complete suppression *surface*, and its own help text advertises it:
+The **native Chrome launch line** carries no stealth flag. That is a narrower statement than it looks, and §2.4 covers the provider paths where it stops being true.
+
+Even for local Chrome, the repo ships a complete suppression *surface*, and its own help text advertises it:
 
 ```
   --args <args>    Browser launch args, comma or newline separated (or AGENT_BROWSER_ARGS)
@@ -72,6 +78,8 @@ Resist ranking this against the §3 artifacts; they are different kinds of signa
 
 Persistent profiles are supported via `--profile`; they are simply not the default. Whether that default is right is a product decision — ephemerality is a genuine privacy and isolation feature — but it should be a deliberate one rather than a side effect.
 
+**One sharp edge inside `--profile` itself.** It persists only in its *path* form. Given a Chrome profile **name**, `chrome.rs:557-573` locates your real Chrome user-data directory, **copies** the profile to a temp dir, and rewrites the option to point at the copy — then hands that temp dir to `ChromeProcess.temp_user_data_dir` (`chrome.rs:588`), where the same `Drop` deletes it. So `agent-browser --profile Default` reads your existing login state and discards every write the session makes. That is defensible as a safety property (your real profile is never mutated) but it is the opposite of what "persistent profile" implies, and anyone reaching for `--profile` to build continuity needs to pass a path.
+
 The `--remote-debugging-port=0` choice deserves emphasis because it is easy to misread as incidental. Chromium special-cases it deliberately: port `0` is the ephemeral port ChromeDriver uses, so it counts as automation, whereas a fixed port is assumed to be a developer attaching a debugger and leaves the feature unset. The handbook covers this in *Automation signals and control stacks*. agent-browser therefore reports its automation status truthfully by default — the cooperative behavior, arrived at as a side effect.
 
 **Protocol surface.** `Runtime.enable`, `Page.enable`, and `Network.enable` are issued on session setup (`browser.rs:657-708`, `actions.rs:2754-2760`, `state.rs:164-167`). `Runtime.enable` is the classic CDP tell. The V8 changes of May 2025 killed the popular `Error.stack` side-effect detector, but execution-context disclosure remains observable, and it is a hypothesis to re-measure per Chrome release rather than a settled fact.
@@ -92,10 +100,16 @@ For detection purposes this is the **least** disguisable backend, and that is fi
 
 `cli/src/native/providers.rs` resolves a CDP WebSocket URL for `browserbase`, `browserless`, `browser-use`, `kernel`, `agentcore`, and plugin providers (`providers.rs:50-195`). The Kernel path (`connect_kernel`, `providers.rs:393`) talks to `https://api.onkernel.com` (`providers.rs:396`, overridable via `KERNEL_ENDPOINT`) and returns a WebSocket the client drives.
 
-**This is the direct link to the handbook.** The Kernel provider's server side is the image audited in *What Kernel's public image repo implements*. Everything in that section applies to this backend, and three items are operationally significant here:
+**The providers are where "honest by default" stops being true, and it is not subtle.** `connect_browserless` reads `BROWSERLESS_STEALTH` and defaults it to **`true`** (`providers.rs:325-327`), sending `"stealth": true` in every session-creation body (`:338`) unless the operator explicitly opts out. Kernel has the parallel `KERNEL_STEALTH` (`providers.rs:403`, default `false`, sent at `:413`).
 
-- **Headless and headful are asymmetric.** Kernel's "headless+stealth" default flag list applies only to the headless profile and only when `CHROMIUM_FLAGS` is empty. Which agent-browser sessions land on which profile determines what the origin sees, and the answer is not visible from the client.
-- **A fixed persistent profile.** Kernel uses one persistent `/home/kernel/user-data`. Profile continuity across agent-browser sessions is therefore a server-side property that the client does not control and should not assume is isolated.
+These are not accidents or leftovers. They are documented product features: `README.md:1649` lists `BROWSERLESS_STEALTH` with default `true`, and `README.md:1725` describes `KERNEL_STEALTH` as *"Enable stealth mode to avoid bot detection."* The provider docs pages repeat both.
+
+So the accurate statement about this project is: **the local Chrome path is honest by default; the Browserless path requests stealth by default.** A user who types `agent-browser --provider browserless open <url>` has asked a third-party service to suppress automation signals against an origin, without ever seeing the word "stealth," and with no authorization gate anywhere in the path. That belongs in §5's second pile, and flipping the default is a smaller diff than anything currently on the no-regret list.
+
+**The rest of the Kernel path is the direct link to the handbook.** The Kernel provider's server side is the image audited in *What Kernel's public image repo implements*. Everything in that section applies to this backend, and three items are operationally significant here:
+
+- **Headless and headful are asymmetric, and the client chooses — badly, by default.** Kernel's "headless+stealth" default flag list applies only to the headless profile and only when `CHROMIUM_FLAGS` is empty. agent-browser selects the profile via `KERNEL_HEADLESS`, defaulting to **`true`** (`providers.rs:400-402`, posted at `:411-415`). So the default Kernel session lands on precisely the profile that carries the stealth flag list. `KERNEL_STEALTH` defaulting to `false` does not offset this: the two are separate knobs, and the flag list travels with the headless profile regardless.
+- **A fixed persistent profile, partly client-selected.** Kernel uses one persistent `/home/kernel/user-data`, and the client can name a profile via `KERNEL_PROFILE_NAME` (`providers.rs:417-424`). Profile continuity is therefore *influenced* by the client but owned by the server — do not assume a session is isolated from previous ones just because you did not ask for continuity.
 - **The control plane is the security story, not the fingerprint.** The audited image forces `--remote-allow-origins=*`, runs its API as root, and bakes a CA private key into the image trust store. None of that changes what a *website* sees; all of it matters for what a *session* can reach. If agent-browser executes untrusted or model-generated code against a Kernel session, read handbook findings 2 and 3 together before deciding that is acceptable.
 
 Practically: when using a remote provider, agent-browser is a **client of someone else's identity decisions**. The right posture is to measure what the provider actually emits rather than to reason about it from the client side, which §6 covers.
@@ -112,7 +126,9 @@ const USER_AGENT_VALUE: &str = concat!("agent-browser/", env!("CARGO_PKG_VERSION
 
 That is `read.rs:13`, sent at `read.rs:331`. This is a fifth cohort with a JA3/JA4 nothing like Chrome's — rustls, not BoringSSL — and no browser identity whatsoever.
 
-Two things follow. First, it belongs in the §6 measurement matrix as its own baseline; a harness that only profiles the CDP backends will miss it entirely. Second, and worth noticing: **`read` already does what §5 recommends.** It identifies itself honestly, in the header a site actually reads, with a version string an operator could allowlist. It is the declared-identity posture, shipped, in the cheapest code path in the project. If the argument in §5 seems abstract, this is the concrete precedent — and the obvious place to attach a Web Bot Auth signature first, since it has no browser stack to reconcile.
+This applies to the **URL-argument form only**. `handle_read` (`actions.rs:4237-4278`) has two shapes: given a URL it calls `run_read` (`:4249`), the reqwest path described here; given no URL it makes no HTTP request at all, instead extracting from the browser's already-fetched HTML via `read_json_from_active_html` (`:4274`) and requiring a live browser. So `read` never launches or escalates to a browser — the framing holds — but in the no-URL form neither the rustls handshake nor the honest UA ever happens, because there is no request.
+
+Two things follow. First, the URL form belongs in the §6 measurement matrix as its own baseline; a harness that only profiles the CDP backends will miss it entirely. Second, and worth noticing: **`read` already does what §5 recommends.** It identifies itself honestly, in the header a site actually reads, with a version string an operator could allowlist. It is the declared-identity posture, shipped, in the cheapest code path in the project. If the argument in §5 seems abstract, this is the concrete precedent — and the obvious place to attach a Web Bot Auth signature first, since it has no browser stack to reconcile.
 
 ---
 
@@ -126,39 +142,42 @@ The main interaction paths use CDP input — `Input.dispatchMouseEvent`, `dispat
 
 But several fast paths synthesize events in the page instead:
 
-Three sites end a write with a synthetic event and no trusted event after it:
+Four sites end a write with a synthetic event and no trusted event after it:
 
-- `element.rs:1180-1199` — `set_element_value`, reached only from the `setvalue` command (`actions.rs:6722`).
+- `element.rs:1180-1199` — `set_element_value`, reached from the `setvalue` command (`actions.rs:6722`).
+- `interaction.rs:710-714` — the `clear` verb, reached from `actions.rs:2316` via `handle_clear` (`actions.rs:6511`). Sets `this.value = ''` and fires synthetic `input` and `change`, then returns with no CDP `Input` call.
 - `interaction.rs:455` — `select_option`.
 - `actions.rs:8784` — `select.dispatchEvent(new Event('change', ...))`.
+
+Note that `clear` is the same code as the clear-*step* inside `fill` discussed below, but with a decisive difference: in `fill` a trusted `Input.insertText` follows and repairs it, whereas the standalone `clear` verb ends there.
 
 **These are where the correctness bug lives, and the mechanism is worth getting right** because the intuitive version is backwards. React does not miss the update because a native setter was bypassed; it misses it because a native setter was *not* used. React installs a `_valueTracker` that shadows `value` on the instance, so `this.value = x` runs through React's own tracked setter and updates its cached value in lockstep. When the synthetic `input` arrives, `updateValueIfChanged` compares node value to tracked value, finds them equal, and drops the event — `onChange` never fires, and React may overwrite the DOM value on its next render. For a controlled input the suppression should be deterministic rather than occasional, and the standard workaround is the inverse of the intuition: fetch `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set` and call it explicitly to defeat the tracker, *then* dispatch.
 
 **This paragraph and the next are reasoning from React's source, not from an observed failure**, and they are load-bearing for the fix. React's tracker implementation has changed across major versions and the behaviour is not scoped here to any particular one. Before acting on this, write the two-line repro — a controlled input, `setvalue`, assert `onChange` fired — and pin the React version you observed. If the second paragraph below is wrong, the recommended fix is incomplete rather than merely unnecessary.
 
-Two citations in that list are public API rather than defects, and shouldn't be read as such: `interaction.rs:832` implements the user-facing `dispatch_event(type, init)` verb, where emitting an untrusted event is the entire contract, and `select_option` has no CDP alternative because `Input` cannot drive a native `<select>`. The defect is the missing native-setter call, not the use of JavaScript.
+Two nearby sites are public API rather than defects, and shouldn't be read as such. `interaction.rs:832` — inside `pub async fn dispatch_event`, which opens at `:809` — implements the user-facing `dispatch_event(type, init)` verb, where emitting an untrusted event is the entire contract, and `select_option` has no CDP alternative because `Input` cannot drive a native `<select>`. The defect is the missing native-setter call, not the use of JavaScript.
 
 **The `fill` path is a different problem.** The clear-field step at `interaction.rs:147-156` — inside `pub async fn fill` — runs `this.value = ''` plus a synthetic `input`, then writes the new value with `Input.insertText` (`interaction.rs:169`). Because `insertText` goes through the browser's own input machinery rather than the JS property, it desynchronizes the tracker and React re-syncs correctly. So the dropped clear event is harmless here: a correct event follows it.
 
 What remains in `fill` is a provenance contradiction rather than a correctness bug — and a second artifact worth naming separately. `Input.insertText` produces a trusted `input` event but emits **no `keydown`, `keypress`, or `keyup` at all**. A page with a keystroke listener sees a value materialize without any keys being pressed. That is a sharper and more distinctive signal than an untrusted event, and it is invisible to any test that only asserts final field value.
 
-**Fix:** for the three terminal-write sites, call the native prototype setter before dispatching. For `fill`, decide deliberately whether the verb should emit a key sequence — `insertText` is right for speed and wrong for anything testing key handling — and assert the expected event sequence either way. The handbook's *Native behavior beats broad spoofing* is the general form.
+**Fix:** for the four terminal-write sites, call the native prototype setter before dispatching. For `fill`, decide deliberately whether the verb should emit a key sequence — `insertText` is right for speed and wrong for anything testing key handling — and assert the expected event sequence either way. The handbook's *Native behavior beats broad spoofing* is the general form.
 
 ### 3.2 Branded identifiers and unmasked wrappers in page scope
 
 Two separate injections put a stable, greppable tool name into page-reachable state. An `__AB_` or `_agentBrowser` prefix is exactly as identifying as ChromeDriver's `cdc_` properties or Puppeteer's `pptr:` source URLs: any site that has seen agent-browser once can detect it forever with a one-line check.
 
-**The profiler globals.** `RENDERS_INIT` installs `__AB_RENDERS__`, `__AB_RENDERS_ACTIVE__`, `__AB_RENDERS_FPS__`, `__AB_RENDERS_START__`, and `__AB_RENDERS_ORIG_COMMIT__` (`react/scripts.rs`). These do require `--enable react-devtools`, since `RENDERS_INIT` early-returns without the DevTools hook (`react/scripts.rs:202`), and the hook is installed only under that flag (`actions.rs:3211-3228`, injected at `actions.rs:3223` and the CDP call at `browser.rs:1487`).
+**The profiler globals.** `RENDERS_INIT` installs `__AB_RENDERS__`, `__AB_RENDERS_ACTIVE__`, `__AB_RENDERS_FPS__`, `__AB_RENDERS_START__`, and `__AB_RENDERS_ORIG_COMMIT__` (`react/scripts.rs`). These do require `--enable react-devtools` (or its `react` alias, `actions.rs:3222`), since `RENDERS_INIT` early-returns without the DevTools hook (`react/scripts.rs:202-203`), and the hook is installed only under that flag (`actions.rs:3211-3228`, injected at `actions.rs:3223` and the CDP call at `browser.rs:1487`).
 
 But **`vitals` is not React-gated**, and it carries the same prefix. `VITALS_INIT` installs `__AB_VITALS__`, `__AB_VITALS_INSTALLED__` (`react/scripts.rs:671-675`), and `__AB_REACT_TIMING__` (`:729`), and is injected at `actions.rs:7094` and `:7102`. The module's own docs call `vitals` a "universal verb" that is "framework-agnostic" and needs no DevTools hook (`react/mod.rs:1-7`). So the `__AB_` namespace reaches ordinary non-React pages, and the blast radius is wider than "React profiling."
 
 The contrast with `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` is still instructive but works differently than it first appears: that global is *plausible* — millions of developers have React DevTools installed, so it blends into a real population — and it is also the flag-gated one. The distinctive global is the ungated one.
 
-**The domain-filter script is the larger artifact, and it rides the security path.** With `--allowed-domains` set, `install_domain_filter_script` (`network.rs:161-183`) replaces **five** page APIs with wrappers — `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `navigator.sendBeacon` (`network.rs:346-400`). There is no `Function.prototype.toString` masking anywhere in the file, so all five report as non-native to a one-line check. `network.rs:299` also serializes the installer into worker bootstrap source via `_agentBrowserInstallDomainFilter.toString()`, placing the literal function name in page-reachable state.
+**The domain-filter script is the larger artifact, and it rides the security path.** With `--allowed-domains` set, `install_domain_filter_script` (`network.rs:161-183`) replaces **five** page APIs with wrappers — `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `navigator.sendBeacon` (`network.rs:346-406`). There is no `Function.prototype.toString` masking anywhere in the file, so all five report as non-native to a one-line check. `network.rs:299` also serializes the installer into worker bootstrap source via `_agentBrowserInstallDomainFilter.toString()`, placing the literal function name in page-reachable state.
 
 `RTCPeerConnection` belongs in a separate category and it matters for the fix below. `network.rs:407-425` does not wrap it — it installs a constructor that throws unconditionally, with `prototype` set to a frozen null-prototype object and the global defined `writable:false, configurable:false`. That is a **hard block**, detectable by one `new` call or by descriptor inspection without any `toString` involved, and it is the only part of the domain filter that changes what a page can do: WebRTC simply breaks. It is also, per the comment at `chrome.rs:512-514`, the *primary* WebRTC containment control — the launch flag is the backstop.
 
-This matters more than the profiler globals for a simple reason: it is attached to a *security* feature. Anyone restricting an agent to an origin allowlist — the cautious, recommended configuration — gets six unmasked monkeypatches and a branded identifier, while the careless user who skips `--allowed-domains` gets none of them. The safety feature is the loudest thing in the page.
+This matters more than the profiler globals for a simple reason: it is attached to a *security* feature. Anyone restricting an agent to an origin allowlist — the cautious, recommended configuration — gets five unmasked monkeypatches, a hard-blocked constructor, and a branded identifier, while the careless user who skips `--allowed-domains` gets none of them. The safety feature is the loudest thing in the page.
 
 **Fix, priced honestly.** A closure will not work for the `__AB_` state: `RENDERS_INIT` and `VITALS_INIT` are injected via `addScriptToEvaluateOnNewDocument` and their results are read by a *separate, later* `Runtime.evaluate` (`scripts.rs:209` writes, `:392` reads; `:675` writes, `:752` reads). Two independent evaluations cannot share a closure — the global **is** the channel between them, which is why it exists. An isolated world would work but is not cheap either: `grep` across `cli/src` returns zero hits for `createIsolatedWorld`, `worldName`, and `executionContextId`, so it means new CDP plumbing threaded through every evaluate call site.
 
@@ -222,18 +241,20 @@ Tier 0  Lightpanda / no-JS extraction
           provides: HTTP fetch, static content, no JS execution
 
 Tier 1  Native CDP + headless Chrome, SwiftShader
-          provides: JS execution, DOM, software canvas/WebGL, ephemeral profile
+          provides: JS execution, DOM, software canvas/WebGL,
+                    persistent profile (--profile works here too)
 
 Tier 2  Native CDP + headful Chrome, real display, hardware GPU, full font corpus
-          provides: hardware rendering, extensions, real font metrics,
-                    persistent profile, compositor-dependent layout
+          provides: hardware rendering, real font metrics, extensions
+                    (extensions genuinely force headful, chrome.rs:441-444),
+                    compositor-dependent layout
 
 Tier 3  Remote provider (Kernel et al.), managed environment
           provides: an environment the local host cannot supply
                     — see §4.3, this tier also changes identity
 ```
 
-A job declaring `needs: [js, persistent-login]` selects tier 2 directly. A job declaring nothing starts at tier 0. The requirement list is a small, auditable artifact that belongs in the identity manifest (§3.3), and writing it down is most of the work — it forces the caller to say what the task actually needs instead of discovering it by failure.
+A job declaring `needs: [js, persistent-login]` selects tier **1** — persistence is orthogonal to headfulness, and `--profile` works identically at either tier. Only a genuine rendering, font-metric, or extension requirement justifies tier 2. A job declaring nothing starts at tier 0. The requirement list is a small, auditable artifact that belongs in the identity manifest (§3.3), and writing it down is most of the work — it forces the caller to say what the task actually needs instead of discovering it by failure.
 
 **Failure-driven promotion still has a narrow, guarded place**, because requirements are sometimes discovered rather than known: a page turns out to need JS that the caller did not anticipate. Permit it only where the evidence is *positive and structural* rather than an absence — the response body contains script tags and a mount point, so the content is demonstrably JS-rendered — and never on a bare absence like "empty result" or "selector missing," which is precisely what a challenge also produces. Everything else is a stop-and-diagnose, per §4.3.
 
@@ -329,7 +350,7 @@ There is a legitimate version of site-specific configuration, and it is worth bu
 
 `cli/src/native/policy.rs` already has the right primitive: an `ActionPolicy` returning `Allow`, `Deny`, or `RequiresConfirmation`, loaded from JSON, with an `AGENT_BROWSER_CONFIRM_ACTIONS` env override. Today it gates *actions*. Extend the same mechanism to gate origins and tier promotions, and the cascade gets an auditable policy layer instead of scattered conditionals.
 
-There is currently **no backend or provider cascade** in the codebase — I searched for one specifically. Retry and fallback logic does exist elsewhere (transient IPC handling in `cli/connection.rs:1005-1081`, daemon respawn in `main.rs:1675`, download retry in `install.rs:256`, accessibility-tree re-query in `element.rs:345` and `:516`, and a content-extraction fallback ladder in `read.rs`), but none of it switches backend or provider. The cascade would be new construction, so it can be built with the stop-state in it from the first commit rather than retrofitted — which is the only time these boundaries actually hold.
+There is currently **no backend or provider cascade** in the codebase — I searched for one specifically. Retry and fallback logic does exist elsewhere (transient IPC handling in `cli/src/connection.rs:1005-1081`, daemon respawn in `main.rs:1675`, download retry in `install.rs:256`, accessibility-tree re-query in `element.rs:345` and `:516`, and a content-extraction fallback ladder in `read.rs`), but none of it switches backend or provider. The cascade would be new construction, so it can be built with the stop-state in it from the first commit rather than retrofitted — which is the only time these boundaries actually hold.
 
 ---
 
@@ -347,13 +368,15 @@ Two things the test does not do. It says nothing about **motive**, and one case 
 
 - **Headful with a real display and hardware GPU.** Buys rendering, compositor, GPU and font fidelity, and fixes genuine layout differences. Biggest single fidelity gain — and it buys **zero** reduction in automation signalling. `--remote-debugging-port=0` sets `AutomationControlled` independently (§2.1), so dropping `--headless=new` removes one of two sufficient causes and `navigator.webdriver` stays `true`. That is exactly why this belongs in pile 1: it improves fidelity without touching a truthful signal. Anyone expecting it to quiet `webdriver` has misread the flag table.
 - **A real font corpus matched to the OS actually running.** Kernel's own history is the case study: commit `cba3f77` added fonts specifically because a three-font container was a signal. Match the real platform, not a platform you would prefer to present, and do not install everything — an implausibly complete corpus is its own outlier.
-- **Persistent profiles with single ownership.** Already supported via `--user-data-dir`. Needs leasing, encryption, and a TTL — `storageState` and cookies are bearer credentials.
-- **Stable egress per session, and fix the WebRTC trigger.** Proxy support exists; egress *stability* and IPv6/DNS policy do not. A session whose ASN changes mid-flight is incoherent no matter how good the browser is. WebRTC containment *does* exist and is well built — `chrome.rs:510-517` forces `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` and `retain`s away any user override so it cannot be weakened, and `network.rs:405-427` blocks `RTCPeerConnection` in-page. But both gate on `restrict_webrtc`, which `actions.rs:2938` and `:3707` define as `!allowed_domains.is_empty()`. **The leak protection is wired to `--allowed-domains`, not to `--proxy`**, so a proxied session without domain filtering — the natural way to use a proxy — leaks the real IP over UDP. Gate it on proxy configuration instead, or on both.
+- **Persistent profiles with single ownership.** Already supported via `--profile` (`flags.rs:257`); `--user-data-dir` is the Chrome switch the code emits, not a CLI flag. Needs leasing, encryption, and a TTL — `storageState` and cookies are bearer credentials.
+- **Stable egress per session, and fix the WebRTC trigger.** Proxy support exists; egress *stability* and IPv6/DNS policy do not. A session whose ASN changes mid-flight is incoherent no matter how good the browser is. WebRTC containment *does* exist and is well built — `chrome.rs:510-517` forces `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` and `retain`s away any user override so it cannot be weakened, and `network.rs:407-425` blocks `RTCPeerConnection` in-page. But both gate on `restrict_webrtc`, which `actions.rs:2938` and `:3707` define as `!allowed_domains.is_empty()`. **The leak protection is wired to `--allowed-domains`, not to `--proxy`**, so a proxied session without domain filtering — the natural way to use a proxy — leaks the real IP over UDP. Gate it on proxy configuration instead, or on both.
 - **Fix §3.1 and §3.2.** Correctness wins that also remove artifacts.
 - **An identity manifest (§3.3)** that rejects contradictions before launch.
 
 **Requires the site owner's express permission — and is already reachable, so the work is adding the gate:**
 
+- **`BROWSERLESS_STEALTH`, which defaults to `true`** (`providers.rs:325-327`) — the only item on this list that is currently *on* unless someone turns it off.
+- **`KERNEL_STEALTH`** (`providers.rs:403`, default `false`), and `KERNEL_HEADLESS` (default `true`), which selects the Kernel profile carrying the stealth flag list.
 - Suppressing `AutomationControlled` via `--args "--disable-blink-features=AutomationControlled"`.
 - Injecting property shims via `--init-script` or a plugin's `initScripts`.
 - Overriding the UA via `--user-agent`.
@@ -402,21 +425,24 @@ One ranked list would need three incompatible sort keys — cheapness, severity,
 
 These are small, independently justified, and do not depend on a measurement baseline or a policy decision.
 
-1. **Gate `--force-webrtc-ip-handling-policy` on `proxy.is_some() || !allowed_domains.is_empty()`** (§5). Today a proxied session without `--allowed-domains` leaks the real IP over UDP. This half is a genuine one-liner with no page surface. Note the *other* half is not: `install_domain_filter_script` early-returns on an empty allowlist (`network.rs:166-168`), so extending the in-page `RTCPeerConnection` block to proxy-only sessions means new injection plumbing and breaking WebRTC for people who wanted a proxy and nothing else. That is a product decision, not a fix — see item 9.
-2. **Make the three terminal synthetic writes call the native prototype setter** (§3.1) — silent correctness bug in React apps.
-3. **Reject a `--user-agent` override that carries no metadata** (§3.4). Today the flag leaves clients worse off than not using it; refusing it is a strict improvement and needs nothing else. *Populating* `userAgentMetadata` is the better fix but depends on the manifest, so it lands with item 6.
-4. **Rename `_agentBrowserInstallDomainFilter`** so worker-bootstrap source stops carrying the tool's name (§3.2), and randomize the `__AB_` property names per launch. Both are cheap; the isolated-world version is not, and is not required.
-5. **Change the `--args` help-text example** (§5). One line, and it stops the tool recommending the anti-pattern to everyone who runs `--help`.
+1. **Flip `BROWSERLESS_STEALTH` to default `false`** (§2.4, §5) — one `unwrap_or` and a docs line. Today every Browserless session asks a third party to suppress automation signals unless the user knew to opt out. Whatever the answer, it should be an explicit choice rather than an inherited default; if the product decision is to keep it on, log it per session so it appears in the record.
+2. **Gate `--force-webrtc-ip-handling-policy` on `proxy.is_some() || !allowed_domains.is_empty()`** (§5). Today a proxied session without `--allowed-domains` leaks the real IP over UDP. This half is a genuine one-liner with no page surface. Note the *other* half is not: `install_domain_filter_script` early-returns on an empty allowlist (`network.rs:166-168`), so extending the in-page `RTCPeerConnection` block to proxy-only sessions means new injection plumbing and breaking WebRTC for people who wanted a proxy and nothing else. That is a product decision, not a fix — see item 10.
+3. **Make the four terminal synthetic writes call the native prototype setter** (§3.1) — silent correctness bug in React apps.
+4. **Reject a `--user-agent` override that carries no metadata** (§3.4). Today the flag leaves clients worse off than not using it; refusing it is a strict improvement and needs nothing else. *Populating* `userAgentMetadata` is the better fix but depends on the manifest, so it lands with item 8.
+5. **Rename `_agentBrowserInstallDomainFilter`** so worker-bootstrap source stops carrying the tool's name (§3.2), and randomize the `__AB_` property names per launch. Both are cheap; the isolated-world version is not, and is not required.
+6. **Change the `--args` help-text example** (§5). One line, and it stops the tool recommending the anti-pattern to everyone who runs `--help`.
 
 ### Gated: needs the harness or a decision first
 
-6. **Build the origin-side measurement harness** (§6), covering all six cohorts including `read`. Everything below changes observable behavior, and without a baseline you cannot tell a fix from a regression.
-7. **Introduce the identity manifest** (§3.3) — prerequisite for the cascade, for item 3's better half, and for any cohort claim. Needs a field list and an owner; it is a subsystem, not a task.
-8. **Move the five HTTP-shaped domain-filter wrappers to CDP `Fetch`/`Network` interception** (§3.2). The `RTCPeerConnection` hard block stays in the page — no CDP domain replaces it.
-9. **Decide the throwaway-profile default** (§2.1) and whether proxied sessions lose WebRTC (item 1). Both are product decisions with real tradeoffs — ephemerality is a privacy feature, and persistent profiles need leasing, encryption, and a TTL, which is three subsystems in a clause.
-10. **Build requirement-driven tier selection** (§4.1) with the stop-state (§4.2), the identity/horsepower split applied at every boundary (§4.3), and a diagnostic stop path (§4.4) from the first commit. Measure the tier-0 hit rate before committing to four tiers.
-11. **Add headful/hardware-GPU and font-cohort tiers** (§5) — the largest fidelity gain, and the one most in need of a baseline to prove it worked.
-12. **Extend `policy.rs` to per-origin authorization** (§4.6, §5), gating the suppression flags. The handbook's authorization record is a ready-made schema; cite it rather than inventing one.
-13. **Track Web Bot Auth** (§5); prototype signing on `read` first, since it has no browser stack to reconcile.
+7. **Build the origin-side measurement harness** (§6), covering all six cohorts including `read`. Everything below changes observable behavior, and without a baseline you cannot tell a fix from a regression.
+8. **Introduce the identity manifest** (§3.3) — prerequisite for the cascade, for item 4's better half, and for any cohort claim. Needs a field list and an owner; it is a subsystem, not a task.
+9. **Move the five HTTP-shaped domain-filter wrappers to CDP `Fetch`/`Network` interception** (§3.2). The `RTCPeerConnection` hard block stays in the page — no CDP domain replaces it.
+10. **Decide the throwaway-profile default** (§2.1) and whether proxied sessions lose WebRTC (item 2). Both are product decisions with real tradeoffs — ephemerality is a privacy feature, and persistent profiles need leasing, encryption, and a TTL, which is three subsystems in a clause.
+11. **Build requirement-driven tier selection** (§4.1) with the stop-state (§4.2), the identity/horsepower split applied at every boundary (§4.3), and a diagnostic stop path (§4.4) from the first commit. Measure the tier-0 hit rate before committing to four tiers.
+12. **Add headful/hardware-GPU and font-cohort tiers** (§5) — the largest fidelity gain, and the one most in need of a baseline to prove it worked.
+13. **Extend `policy.rs` to per-origin authorization** (§4.6, §5), gating the suppression flags. The handbook's authorization record is a ready-made schema; cite it rather than inventing one.
+14. **Track Web Bot Auth** (§5); prototype signing on `read` first, since it has no browser stack to reconcile.
 
-The property worth protecting through all of it is that agent-browser is honest by default. `--remote-debugging-port=0` arrived at the cooperative behavior by accident, and every finding above is fixable without giving that up.
+The property worth protecting through all of it is that agent-browser's *local* path is honest by default — `--remote-debugging-port=0` arrived at the cooperative behavior by accident, and every finding above is fixable without giving that up.
+
+The provider paths do not currently have that property, and that is the single most consequential thing in this document. `BROWSERLESS_STEALTH` defaulting to `true` means the honest-by-default story is a statement about one backend rather than about the tool, and a user reaching for a remote provider crosses into pile 3 without a prompt, a log line, or a word in the output. Whichever way that default goes, it should be a decision someone made on the record.
