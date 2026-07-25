@@ -14,7 +14,7 @@
 
 This is deliberately narrower than defeating bot controls. It does **not** authorize CAPTCHA solving, credential abuse, fake engagement, account farming, quota evasion, bypassing access controls, or rotating identities after a denial. Use it on systems you own, systems that expressly permit the method as well as the work, or engagements with written authorization. Legal notes are informational, not legal advice.
 
-**Authorization is method-specific.** Permission to access a site, account, or API does not by itself authorize concealing automation status from third-party bot controls. Suppressing standard automation signals, patching control artifacts, or generating human-like input against those controls requires express permission from the site or system owner. Without it, use truthful WebDriver state, cooperative allowlisting, or an official API. Stopping on a challenge is a minimum safeguard—not permission to evade controls until a challenge appears.
+**Authorization is method-specific.** Permission to access a site, account, or API does not by itself authorize concealing automation status from third-party bot controls. Suppressing standard automation signals, patching control artifacts, engineering transport/protocol fingerprints to impersonate another client, or generating human-like input against those controls requires express permission from the site or system owner. Without it, use truthful WebDriver state, cooperative allowlisting, or an official API. Stopping on a challenge is a minimum safeguard—not permission to evade controls until a challenge appears.
 
 The document is intentionally self-contained. Linked sources establish provenance, expose version-sensitive details, and provide deeper verification; reading them should not be required to understand the implementation model here.
 
@@ -566,7 +566,7 @@ If browser wire fidelity matters, use a blind `CONNECT` tunnel or full network t
 | IP geography | Broadly plausible with intended locale/timezone. | City precision is unreliable; travel, mobile, anycast and corporate egress are normal. |
 | DNS | Resolve at/near the intended egress; document DoH/bootstrap. | Local DNS or direct DoH can select a CDN far from the exit and leak the client network. |
 | HTTPS proxy | Blind `CONNECT` when preserving browser TLS/H2/H3; secure client-to-proxy credentials. | TLS interception replaces the origin-facing browser stack. |
-| SOCKS | Proxy-side target resolution; explicitly test auth and UDP limitations. | Chromium SOCKS5 proxies TCP URL requests, has no SOCKS auth, and does not automatically carry QUIC/WebRTC UDP. |
+| SOCKS | Proxy-side target resolution; explicitly test auth and UDP limitations. | Chromium’s SOCKS5 client proxies only TCP-based URL requests, always resolves target names proxy-side, supports no authentication methods (although SOCKS5 defines some), and does not carry QUIC/WebRTC UDP. |
 | WebRTC | ICE candidates use the permitted path; relay-only TURN or non-proxied-UDP policy when required. | mDNS hides local numeric host candidates but does not stop direct public STUN candidates. |
 | TLS/JA3/JA4 | Native browser emits ClientHello; ALPN agrees with subsequent protocol. | JA3 is brittle; JA4 groups more broadly; neither uniquely identifies a device. |
 | HTTP/2 | Browser’s SETTINGS, flow control, priorities, HPACK and pseudo-header order stay together. | Copied headers cannot repair a different H2 stack. |
