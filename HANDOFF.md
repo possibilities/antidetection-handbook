@@ -58,6 +58,19 @@ Measured, with controls:
 - Chrome 150 offers X25519MLKEM768 (`0x11ec`) as a real 1216-byte key share.
   A strong browser-versus-generic-client discriminator today, and the single
   most likely component to move as post-quantum deployment matures.
+- **Do not baseline JA3.** Chrome shuffles ClientHello extension order every
+  connection — 10 handshakes, 10 distinct orders, one constant extension set —
+  so a pinned JA3 gate fails 100% of the time on an unmodified browser. Assert
+  order-independent things: the extension set, the cipher set, GREASE presence,
+  groups minus the GREASE slot, ALPN.
+- At the page layer everything measured is **stable** across cold runs,
+  including a byte-identical canvas hash. The stability table is in
+  `lab/FINDINGS.md`; it is what tells you which gates can be exact and which
+  must be distributions.
+- Identity propagation fails in two places, and they compose: new targets
+  (`tab_new`) and **service workers**. A fix framed as "create the target at
+  `about:blank` first" addresses neither. What is missing is one initializer
+  every realm and target runs before it can emit traffic.
 
 ## Build order
 
@@ -105,10 +118,18 @@ saw for that same navigation.
 correctness finding were dead code. Grep the dispatch table for who actually
 emits an action before ranking a fix.
 
+**A fingerprint that varies by design is not a regression signal.** We asserted
+differing JA3 as evidence before discovering JA3 differs between two loads of
+the same browser. Check whether a value is stable *at all* before building a
+gate on it — `lab/experiments/e09-drift-stability.mjs` is the shape of that
+check.
+
 ## Deliberately not done
 
 HTTP/2 framing — SETTINGS, window sizes and pseudo-header order (the TLS layer
-is done; `lab/tls-origin.mjs` only decodes HTTP/1.1 request lines today). React 19
+is done; `lab/tls-origin.mjs` only decodes HTTP/1.1 request lines today). A JA4
+implementation, if you want a stable transport hash — the sorting rule is the
+whole point and we deliberately did not hand-roll it. React 19
 (dropped UMD; needs a bundled fixture). Real proxy and paid-provider arms.
 Branded DOM mutations under a `MutationObserver`. `--profile <name>`
 copy-and-discard. The four repository security concerns in the companion's

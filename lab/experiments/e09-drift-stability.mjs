@@ -20,8 +20,11 @@ import { startOrigin, ab, withSession, check, report, AB_BIN } from '../lib.mjs'
 import { startTlsOrigin } from '../tls-origin.mjs';
 import { createHash } from 'node:crypto';
 
-const RUNS = Number(process.env.LAB_RUNS || 10);
-const TLS_RUNS = Number(process.env.LAB_TLS_RUNS || 5);
+// Modest defaults so the suite stays runnable; raise via env for a real
+// baseline. Progress is printed per run — a long silent experiment is
+// indistinguishable from a wedged one, which cost us a wait.
+const RUNS = Number(process.env.LAB_RUNS || 6);
+const TLS_RUNS = Number(process.env.LAB_TLS_RUNS || 3);
 const results = [];
 const origin = await startOrigin();
 
@@ -37,6 +40,7 @@ for (let i = 0; i < RUNS; i++) {
     }
   });
   const p = origin.collected[0];
+  process.stdout.write(`    cold run ${i + 1}/${RUNS} ${p ? 'ok' : 'NO REPORT'}\n`);
   if (!p) continue;
   observations.push({
     userAgent: p.userAgent,
@@ -95,6 +99,7 @@ for (let i = 0; i < TLS_RUNS; i++) {
     await ab(['--session', s, '--ignore-https-errors', 'open', `${tls.base}/`], { timeoutMs: 120_000 });
   });
   await new Promise((r) => setTimeout(r, 600));
+  process.stdout.write(`    handshake ${i + 1}/${TLS_RUNS} captured=${tls.hellos.length}\n`);
 }
 await tls.close();
 const ja3s = [...new Set(tls.hellos.filter((h) => h.ja3Hash).map((h) => h.ja3Hash))];

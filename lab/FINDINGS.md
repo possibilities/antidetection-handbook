@@ -297,6 +297,66 @@ Note how this composes with finding 6: identity fails to propagate to new
 `about:blank` first" addresses neither. What is missing is a single initializer
 that every realm and every target runs before it can emit traffic.
 
+### 11. The stability table (E09)
+
+What the handbook's measurement chapter needs and never supplied: which values
+are hard invariants and which are distributions. Six cold runs, fresh session
+and browser each time.
+
+**Stable across every run — candidates for hard invariants:** `userAgent`,
+`platform`, `languages`, `timezone`, `hardwareConcurrency`, `deviceMemory`,
+`screen`, `viewport`, `devicePixelRatio`, `webglVendor`, `webglRenderer`,
+`uaBrands`, `maxTouchPoints`, **and the canvas hash** — byte-identical every
+time (`eb045d78d273`).
+
+**Varied across runs:** nothing, at the page layer.
+
+Two consequences. Canvas output being byte-stable means it is usable as a hard
+invariant on a pinned build, and it also means any "canvas noise" defence would
+be trivially detectable here by repeat-reading. And the impossible geometry from
+finding 3 reproduces on **every** run — it is a deterministic property of the
+default configuration, not an intermittent artefact.
+
+### 12. JA3 is useless as a gate, because Chrome shuffles extension order (E09)
+
+The sharpest transport finding, and it corrects how finding 8 should be read.
+
+Across 25 handshakes: **25 distinct JA3 hashes**. Isolating the cause with
+GREASE filtered out:
+
+```
+10 handshakes -> 10 distinct extension ORDERS
+              ->  1 distinct extension SET
+```
+
+```
+0x0012,0x000d,0xff01,0xfe0d,0x000a,0x002b,0x0033,0x001b,0x000b,0x002d,0x0023,0x0017,0x44cd,0x0010,0x0005
+0x002d,0x000b,0x0017,0x002b,0x0010,0x000d,0x001b,0x44cd,0xfe0d,0x0012,0x000a,0x0005,0x0023,0xff01,0x0033
+```
+
+Same fifteen extensions, reshuffled every connection. Chrome randomizes
+ClientHello extension order deliberately, so **JA3 changes on every connection
+from a single unmodified browser**. Pinning a JA3 baseline as a regression gate
+would fail 100% of the time for no reason at all.
+
+This is exactly why JA4 sorts extensions before hashing, and it empirically
+vindicates the handbook's "JA3 is brittle; JA4 groups more broadly" line. It
+also retroactively justifies not hand-rolling JA4 in `tls-origin.mjs`: the
+sorting rule *is* the point, and a JA4 with the sort wrong would be as useless
+as JA3 while looking authoritative.
+
+**Correction to finding 8.** E07 asserted "the TLS fingerprints differ despite
+identical headers" using JA3 hashes. That assertion is weak — those hashes
+differ between two loads of the *same* browser. The finding stands on the
+order-independent evidence instead: 16 cipher suites versus 49, 17 extensions
+versus 6, GREASE present versus absent, `0x11ec` offered versus not. Those are
+the comparisons to cite.
+
+**Order-independent baselines only.** For anyone building the regression
+harness: assert the extension *set*, the cipher *set*, GREASE presence, the
+group list after removing the GREASE slot, and ALPN. Never assert an order, and
+never assert a JA3.
+
 ---
 
 ## A confound that invalidated part of an earlier round

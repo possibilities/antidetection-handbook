@@ -91,7 +91,11 @@ results.push(
 // --- The transport does NOT -----------------------------------------------
 results.push(
   check(
-    'CLAIM: the TLS fingerprints differ despite identical headers',
+    // NOTE: differing JA3 is WEAK evidence — E09 showed Chrome shuffles
+    // extension order per connection, so two loads of the same browser also
+    // produce different JA3. The order-independent comparisons below are the
+    // real evidence. Kept only to record the hashes.
+    'JA3 hashes differ (weak: they differ run-to-run anyway — see E09)',
     Boolean(browserHello?.ja3Hash && curlHello?.ja3Hash && browserHello.ja3Hash !== curlHello.ja3Hash),
     { browserJa3: browserHello?.ja3Hash, curlJa3: curlHello?.ja3Hash },
   ),
