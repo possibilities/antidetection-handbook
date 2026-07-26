@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>react tracker fixture</title>
+<body>
+<div id="root"></div>
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script>
+// Fixture for the React _valueTracker claim (companion §3.1).
+//
+// The bug signature we are looking for:
+//   DOM value changes -> native input/change events fire -> React state does
+//   NOT update -> an unrelated rerender restores React's stale value.
+//
+// Deliberately NOT in StrictMode: double-invocation would make any render or
+// callback counting ambiguous.
+//
+// State is reported by POSTing a snapshot on a timer rather than through a CLI
+// eval, because `agent-browser eval` does not reliably execute in the target a
+// previous `open` navigated (see lab/README.md).
+
+const e = React.createElement;
+const events = [];
+
+function App() {
+  const [controlled, setControlled] = React.useState('INITIAL');
+  const [changeCount, setChangeCount] = React.useState(0);
+  const [nonce, setNonce] = React.useState(0);
+  const [selVal, setSelVal] = React.useState('alpha');
+  const [selChanges, setSelChanges] = React.useState(0);
+  const ref = React.useRef(null);
+
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Native capture listeners: order and trust, independent of React.
+    const log = (ev) => {
+      events.push({ type: ev.type, isTrusted: ev.isTrusted, value: el.value, at: Date.now() });
+    };
+    for (const t of ['input', 'change', 'keydown', 'keyup', 'beforeinput']) {
+      el.addEventListener(t, log, true);
+    }
+    window.__fixture = {
+      // Sensitivity control: drive the NATIVE prototype setter, then dispatch
+      // the same untrusted event. If React updates here but not under
+      // `setvalue`, the tracker is implicated rather than isTrusted.
+      nativeSetterWrite(v) {
+        const d = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+        d.set.call(el, v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      // Reproduces exactly what the CLI's setvalue path does in-page, so the
+      // mechanism can be tested without the CLI in the loop.
+      instanceWrite(v) {
+        el.value = v;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+    };
+  }, []);
+
+  return e('div', null,
+    e('input', {
+      id: 'controlled', ref, value: controlled,
+      onChange: (ev) => { setControlled(ev.target.value); setChangeCount((c) => c + 1); },
+    }),
+    // Uncontrolled negative control: React holds no state for this one, so a
+    // direct write should always "work" and proves the write itself lands.
+    e('input', { id: 'uncontrolled', defaultValue: 'UNCONTROLLED_INITIAL' }),
+    // Controlled <select>: the genuinely CLI-reachable synthetic-write path
+    // (interaction.rs:455 / actions.rs:8784 dispatch a bare change event).
+    e('select', {
+      id: 'sel', value: selVal,
+      onChange: (ev) => { setSelVal(ev.target.value); setSelChanges((c) => c + 1); },
+    },
+      e('option', { value: 'alpha' }, 'alpha'),
+      e('option', { value: 'beta' }, 'beta'),
+      e('option', { value: 'gamma' }, 'gamma'),
+    ),
+    e('div', { id: 'selstate' }, selVal),
+    e('div', { id: 'selcount' }, String(selChanges)),
+    e('button', { id: 'rerender', onClick: () => setNonce((n) => n + 1) }, 'rerender'),
+    e('div', { id: 'state' }, controlled),
+    e('div', { id: 'count' }, String(changeCount)),
+    e('div', { id: 'nonce' }, String(nonce)),
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+
+let seq = 0;
+setInterval(() => {
+  const c = document.getElementById('controlled');
+  const u = document.getElementById('uncontrolled');
+  if (!c) return;
+  navigator.sendBeacon('/__collect', new Blob([JSON.stringify({
+    kind: 'react',
+    seq: seq++,
+    reactVersion: React.version,
+    domValue: c.value,                                  // what the DOM holds
+    reactState: document.getElementById('state').textContent,  // what React holds
+    changeCount: Number(document.getElementById('count').textContent),
+    nonce: Number(document.getElementById('nonce').textContent),
+    uncontrolledDom: u ? u.value : null,
+    selDom: (document.getElementById('sel') || {}).value ?? null,
+    selReact: (document.getElementById('selstate') || {}).textContent ?? null,
+    selChanges: Number((document.getElementById('selcount') || {}).textContent ?? -1),
+    events: events.slice(-12),
+  })], { type: 'application/json' }));
+}, 200);
+</script>
+</body>

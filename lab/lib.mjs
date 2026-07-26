@@ -56,6 +56,17 @@ export async function startOrigin({ onRequest } = {}) {
       return;
     }
 
+    // Vendored, digest-pinned third-party assets (React et al.) live outside
+    // fixtures/ so it stays obvious which bytes are ours.
+    if (path.startsWith('/vendor/')) {
+      const v = join(LAB_DIR, 'vendor', path.slice('/vendor/'.length));
+      if (existsSync(v) && v.startsWith(join(LAB_DIR, 'vendor'))) {
+        res.writeHead(200, { 'content-type': 'text/javascript' });
+        res.end(readFileSync(v));
+        return;
+      }
+    }
+
     const fixture = path === '/' ? 'blank.html' : path.replace(/^\//, '');
     const file = join(LAB_DIR, 'fixtures', fixture);
     if (existsSync(file) && file.startsWith(join(LAB_DIR, 'fixtures'))) {

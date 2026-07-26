@@ -135,6 +135,56 @@ different parts of the codebase. It is cheap to fix (`--screen-info` since Chrom
 
 ---
 
+### 4. §3.1's correctness bug is not a live bug (E04)
+
+The top item on the work list, reproduced against pinned React 18.3.1 UMD. The
+answer went the other way.
+
+**Two of the four "terminal synthetic write" sites are unreachable.** The
+strings `"setvalue"` and `"clear"` appear only in the daemon dispatch table
+(`actions.rs:2316`, `:2326`). No shipped client emits either action — not
+`commands.rs`, not `mcp.rs`, not `main.rs`. They are latent defects in code
+nothing can call.
+
+This was caught by a control, not by inspection. The first run invoked them as
+CLI verbs, the commands silently did nothing, and **every assertion "passed"** —
+DOM unchanged, React unchanged, zero events. Textbook false positive. Only the
+uncontrolled-input control ("did the write land at all?") exposed it.
+
+**The reachable synthetic write does reach React.** `select` (`commands.rs:521`
+→ `interaction.rs:455` / `actions.rs:8784`) dispatches a bare `change` event:
+
+```
+after `select #sel gamma`:  selDom="gamma"  selReact="gamma"  selChanges=1
+after forced rerender:      selDom="gamma"  selReact="gamma"
+```
+
+React's `onChange` fired and the value survived. The `_valueTracker` dedup path
+applies to text inputs, where React reads the `input` event; `<select>` change
+handling does not go through it. So the mechanism is real but does not bite on
+the only path a user can reach.
+
+**Net:** §3.1 should not claim a live correctness bug, and "fix the four
+terminal synthetic writes" does not belong on a no-regret list. What survives is
+(a) dead code that would be a bug if wired up, and (b) the provenance point
+below, which stands on its own.
+
+### 5. Mixed provenance inside one `fill`, confirmed (E04)
+
+Native capture listeners on the controlled input recorded, for a single `fill`:
+
+```
+input:false   beforeinput:true   input:true
+```
+
+An **untrusted** `input` (the clear step) followed by trusted events — one
+logical action emitting both, exactly as §3.1 describes. Also note what is
+absent: no `keydown`, no `keyup`. `Input.insertText` produces a trusted `input`
+with no keystrokes at all, so a page listening for key events sees a value
+materialise from nothing.
+
+---
+
 ## Harness bugs worth remembering
 
 Two of my own, both of which initially produced plausible-looking wrong results:
