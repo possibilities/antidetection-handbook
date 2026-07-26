@@ -126,10 +126,14 @@ export async function startMockProvider() {
 
 /** Run the agent-browser CLI. Never throws on non-zero exit — several
  *  experiments expect failure after the observation has already been made. */
-export function ab(args, { env = {}, timeoutMs = 90_000 } = {}) {
+export function ab(args, { env = {}, unsetEnv = [], timeoutMs = 90_000 } = {}) {
   return new Promise((resolve) => {
+    const merged = { ...process.env, ...env };
+    // An UNSET variable and an empty one are different inputs. Several defaults
+    // read `.unwrap_or(true)`, which an empty string would silently defeat.
+    for (const k of unsetEnv) delete merged[k];
     const child = spawn('agent-browser', args, {
-      env: { ...process.env, ...env },
+      env: merged,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';

@@ -232,11 +232,35 @@ Anyone who reaches for `--user-agent` today gets a client that contradicts itsel
    Version/18.0 Mobile/15E148 Safari/604.1")
 ```
 
-So `set device "iPhone 16"` produces a client whose UA claims Safari on iOS while `navigator.userAgentData` reports Chromium brands, the JS engine is V8, the TLS stack is BoringSSL, and the codec and font surfaces are whatever the host actually has. That is the handbook's mobile-UA-with-desktop-everything contradiction, shipped as a documented feature rather than reached for by a user. It is also a *correctness* problem for the responsive-testing use case these presets exist to serve: a site doing UA-CH-based adaptation will branch the wrong way.
+**What actually happens is measured, not inferred** — see [`lab/FINDINGS.md`](./lab/FINDINGS.md), experiment E03. An earlier draft of this section said `navigator.userAgentData` keeps reporting Chromium brands. It does not. On Chrome 150:
 
-**A second, quieter leak: new tabs navigate before they are configured.** `tab_new` issues `Target.createTarget` with the caller's URL and only *then* attaches and enables domains (`browser.rs:1117-1164`). Per-session overrides and init scripts are applied after attachment, so the tab's **first request** — the navigation itself — escapes all of them. This is the handbook's *Configure before first navigation* principle, violated by ordering.
+| surface | stock | `--user-agent` set | `set device "iPhone 16"` |
+|---|---|---|---|
+| request `User-Agent` | `…HeadlessChrome/150…` | the override | iOS Safari string |
+| request `Sec-CH-UA` | 3 brands | **absent** | **absent** |
+| `navigator.userAgent` | matches header | matches header | matches header |
+| `userAgentData.brands` | 3 brands | **`[]`** | **`[]`** |
 
-**Fix:** treat this as one task, not three. Inventory every identity override in the codebase (`--user-agent`, `set device`, viewport, locale, timezone) and route them through one manifest-derived path that always sets `userAgentMetadata` alongside `userAgent`, rejecting any override that cannot supply coherent metadata. Then create targets at `about:blank`, attach, apply overrides and init scripts, and navigate only afterwards. Fixing `--user-agent` alone leaves the built-in presets contradicting themselves and every new tab leaking its first request.
+Chrome does not leave stale hints — it **suppresses Client Hints entirely** and empties the brands array, and `navigator.userAgent` follows the override faithfully. So the defect is real but differently shaped than described, and arguably worse: the result is a UA string with *no* Client Hints at all, which is a combination no real Chrome 150 produces on a secure origin. An absence is harder to notice than a contradiction, and trivially checkable by a detector.
+
+**The contradiction that does survive is in the hardware.** Same run, `set device "iPhone 16"`:
+
+```
+navigator.userAgent : Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 …) Safari/604.1
+webgl.renderer      : ANGLE (Apple, ANGLE Metal Renderer: Apple M4, …)
+```
+
+An iPhone rendering through Metal on a desktop M4. That is the citable contradiction; the UA-CH story was the wrong one to tell. Treat the exact `userAgentData` outcome as version-specific and re-measure it rather than reasoning about it — that is precisely the claim that was wrong here.
+
+Two further defects in the preset table itself: the Android entries hardcode `Chrome/130.0.0.0` regardless of which executable is actually running, and native `set device` does not enable touch emulation, so a "mobile" persona still reports no touch points.
+
+**A second leak: new tabs navigate before they are configured.** `tab_new` issues `Target.createTarget` with the caller's URL and only then attaches (`browser.rs:1117-1164`). Measured (E02): the initial `open` carried the override, the `tab new` navigation carried `HeadlessChrome/150.0.0.0`.
+
+Two scoping corrections. First, this is **not** every invocation: `should_defer_url_until_network_controls` (`actions.rs:2571-2581`) already makes `handle_tab_new` create `about:blank` first and navigate after controls are installed — but only when a domain allowlist or authenticated proxy is configured (`actions.rs:5851-5875`). The leak is the ordinary path. Encouragingly, **the fix already exists in the codebase**; it is conditioned on network containment rather than on identity.
+
+Second, calling this a first-request *race* is probably too generous. Attachment only enables domains — identity overrides and init scripts are applied to the initial target and never replayed to new ones, so this may be a whole-target propagation failure rather than an ordering problem. E02 measured the first request only; distinguishing the two requires checking whether *later* requests from that tab carry the override.
+
+**Fix.** One acceptance contract, but not one coding task — partial delivery must not be labelled done. It decomposes into: an identity state model; valid UA/metadata/preset semantics (including whether an iOS Safari persona on Chromium should exist at all, versus responsive-only presets, Android emulation derived from the real browser version, and a genuine WebKit backend for iOS); a reusable target initializer that every new target runs before first navigation; and pre-navigation plus new-target tests. Extending the existing defer condition to cover identity — not just containment — is the smallest useful first step.
 
 ---
 
@@ -418,25 +442,41 @@ method_authorization:
   expires_at: …
   challenge_policy: stop
 
-resolved_environment:
+# The environment is THREE records, not one — an earlier draft collapsed them
+# and created a lifecycle cycle: invariant 2 wants the record before
+# authorization, invariant 5 selects from it, but provider and runtime facts
+# only exist after provisioning. Split by when each fact becomes knowable.
+
+candidate_plan:                  # PRELAUNCH, immutable once frozen
   manifest_id: …
   job_id: …
   requirements_digest: …
   authorization_digest: …
   adapter_and_version: …
-  executable_or_image_digest: …
+  executable_or_image_digest: …  # of STAGED bytes, not a path (TOCTOU)
   effective_launch_plan: …       # AFTER CLI/env/config/plugin/provider merge
   requested_capabilities: …
-  provider_declared: …
-  runtime_verified: …
+  extensions: [{digest, declared_effects, verified_effects}]
   profile: {class, lineage, lease}
+
+provisioned_attestation:         # obtained UNDER QUARANTINE from target egress
+  manifest_id: …
+  provider_declared: …           # unknown unless the provider actually attests
+  runtime_verified: …            # from fixed adapter probes on about:blank
+  actual_versions: …
+
+runtime_observations:            # POSTLAUNCH, append-only
+  manifest_id: …
   network: {requested, observed}
   display_renderer_fonts: {requested, observed}
   effective_mutation_digests: […]
+  # NEVER retroactively authorizes the launch it describes.
 
 job_attempt:
   attempt_id: …
-  lineage_id: …
+  job_id: …
+  parent_attempt_id: …
+  lineage_id: …                  # controller-assigned, not caller-resettable
   first_target_contact_at: …
   manifest_id: …
   status: running|stopped|complete
@@ -445,24 +485,37 @@ job_attempt:
     capability: …
     evidence_ref: …
   stop:
+    stop_id: …
     disposition: explicit_enforcement|ambiguous_default_stop|policy_denial|retry_budget_exhausted
     rule_id: …
     observed_facts_ref: …
     stopped_at: …
+    reset_grant_ref: …           # must reference THIS stop_id, approved after it
+
+# Every record also needs: schema version, canonical encoding and hash rules,
+# revision, issuer/signature, revocation semantics, set ordering, secret
+# redaction, and a statement of exactly which bytes each digest covers.
+# `first_target_contact_at` needs precontact/null semantics and a definition
+# spanning DNS, TCP, TLS, redirects, restored pages, workers, and provider
+# startup pages.
 ```
 
 **The invariants matter more than the YAML.** These are the parts an implementer would otherwise have to guess:
 
-1. `issued_at` and every `established_at` must precede `first_target_contact_at`, and `lineage_id` **cannot be reset by starting a new session**. This is what closes the laundering attack in §4.1.
-2. The **fully merged** effective launch plan must be known before the authorization comparison. Plugin and provider mutations cannot be applied afterwards, or the thing authorized is not the thing launched.
-3. Unknown provider or runtime capability **never** satisfies a requirement. Built-in providers currently return `metadata: None`, so today they satisfy nothing.
-4. "Engine telemetry" means an adapter-owned typed channel or static capability table — **not** a `Runtime.evaluate` exception string, which the page can author. The current code flattens those exceptions, so this needs new plumbing before §4.2's promotion rule can be honoured at all.
-5. Selection picks the **least** environment satisfying both requirements and authorization. Unsatisfied, unknown, and tied cases fail closed.
-6. Once STOP latches, only a new job linked to newly validated authorization may contact the target. A new session name is not a reset.
+1. Requirements must be committed **before** first target contact — and wall-clock fields cannot prove that, since an issuer can backdate them and job B can honestly postdate job A's contact while still laundering it. Use a controller-owned append-only event sequence: the requirement digest is committed at event *N*, the lineage's earliest target-egress event is *N+1*. `lineage_id` must be **controller-assigned and not caller-resettable**, or the laundering attack in §4.1 stays open.
+2. The **fully merged** effective launch plan must be known before the authorization comparison, and hashed over *staged bytes* rather than paths. Plugins need two gates: authorize executing the plugin digest, then authorize the mutations it returns — running an unsandboxed plugin merely to discover the plan is already a side effect.
+3. Unknown **never** satisfies a requirement — but evaluate this field by field, not per provider. A provider that returns no metadata can still satisfy facts established statically or independently (that a CDP endpoint connected, say); it cannot satisfy provider-only claims like image digest, region, GPU, profile lineage, or suppression state.
+4. "Engine telemetry" means **the adapter returning a typed result for a fixed adapter-issued operation** — not a `Runtime.evaluate` exception, which the page authors. Preserving `exceptionDetails` instead of flattening it does not help; the *value* is still page-authored. Defensible sources are adapter-specific: a versioned static descriptor for `read`; a capability table keyed to binary digest for Lightpanda; binary/argv descriptors, structured protocol errors and fixed precontact probes on `about:blank` for local Chrome; negotiated W3C capabilities for WebDriver; an authenticated quote bound to the session ID for a remote provider.
+5. Selection picks the **least** environment satisfying both requirements and authorization. Capability sets form a partial order, so define dominance over observable effects plus a stable target-independent preference. Ties are broken **deterministically, not failed closed** — only *unknown* and *unsatisfied* fail, via invariant 3. Incomparable minima need a precontact operator choice.
+6. Once STOP latches, resumption requires a **reset grant** that references that exact `stop_id`, was approved after it, states what changed, and scopes retry count, methods, and origins. "A new job with newly validated authorization" is too weak — it permits revalidating the same standing grant forever. Enforce atomically across daemons.
 
-The transition, end to end: **merge the launch plan → freeze and check requirements → select against verified capability descriptors → intersect exact methods and origins with the authorization → launch and bind → permit reselection only on typed adapter telemetry → otherwise latch STOP.**
+The transition, end to end:
 
-Invariant 4 is the one most likely to be skipped, and skipping it silently reintroduces page-authored promotion evidence through the back door.
+> **freeze requirements + authorization → enumerate candidates → resolve each candidate plan → authorization-filter → choose and freeze → provision under quarantine → attest the exact result → bind authorized egress → first target contact**
+
+Note that binding comes *before* first contact, not at launch: a restored page, an extension, a provider startup page, or a service worker can emit target traffic the moment the browser exists.
+
+**The honest consequence of invariant 4, which an earlier draft buried.** None of those adapter channels exists today — the current code flattens both `Runtime.evaluate` exceptions and CDP errors to strings, and wrapping a string in an enum is not a fix. So until that plumbing is built, the closed evidence enum has **exactly one live arm: precontact requirements**, and *runtime promotion must be switched off entirely*. That is a real constraint on what can ship, not a caveat. Stating it is more useful than implying the rule is available today.
 
 ### 4.6 The "known detectors" idea
 
@@ -595,10 +648,10 @@ The remaining items have hard prerequisites, and an earlier draft listed them in
 
 These surfaced while reading for identity and coherence. They are not detection findings and do not belong in this document's thesis, but they are larger risks than most of what is above and should not be lost:
 
-- **`CI=1` silently disables the Chrome sandbox.** `should_disable_sandbox` (`chrome.rs:1321-1359`) adds `--no-sandbox` when the `CI` environment variable is merely *present*, among other heuristics. An env var is not evidence that an equivalent isolation boundary exists.
-- **Plugins are unrestricted child processes.** `invoke_plugin_process` (`plugins.rs:201-217`) spawns `plugin.command` with the daemon's environment, and plugins may be installed from npm or GitHub. Combined with the `LaunchMutation` surface from §2.1, that is a direct code-execution and secret-exposure boundary — a bigger deal than any page-visible fingerprint here.
-- **Appium launches with `--relaxed-security`.** `launch_appium` (`appium.rs:166-188`) runs unpinned `npx appium --relaxed-security` with no explicit bind address, and sessions use `noReset: true`. That deserves its own WebDriver and mobile threat model.
-- **Named-profile temp copies are best-effort.** Cleanup runs in `Drop`, so a `SIGKILL` can leave a credential-bearing copy of a real Chrome profile on disk.
+- **A *present* `CI` variable silently disables the Chrome sandbox.** `should_disable_sandbox` (`chrome.rs:1321-1359`) adds `--no-sandbox` on `env::var("CI").is_ok()`, which fires for any value at all — including empty, `0`, and `false` — among other heuristics. An env var is not evidence that an equivalent isolation boundary exists.
+- **Plugins are unsandboxed child processes with inherited environment and same-user filesystem and network authority.** `invoke_plugin_process` (`plugins.rs:201-217`) spawns `plugin.command` with the daemon's environment, and plugins may be installed from npm or GitHub. Capability checks, a timeout, and `kill_on_drop` exist — none of them is an OS sandbox or an environment allowlist. Combined with the `LaunchMutation` surface from §2.1, that is a direct code-execution and secret-exposure boundary — a bigger deal than any page-visible fingerprint here.
+- **Appium launches with `--relaxed-security`.** `launch_appium` (`appium.rs:166-188`) runs unpinned `npx appium --relaxed-security` with no explicit bind address, and iOS sessions built by this manager use `noReset: true`. Which insecure features that actually enables, and whether the listener is externally reachable, depend on the unpinned Appium version — do not infer reachability from the missing bind flag alone. Separately, any TCP listener on `127.0.0.1:4723` is accepted as Appium with no `/status` validation.
+- **Named-profile temp copies are best-effort.** Cleanup runs in `Drop` with three removal retries, so a `SIGKILL` bypasses it entirely and can leave a copy of a real Chrome profile — containing authentication and session material — on disk.
 
 The first two would be my priorities if someone writes the security companion.
 

@@ -19,11 +19,27 @@ the mock endpoint captured the literal session-creation body:
 POST /session?token=…   {"browser":"chromium","stealth":true,"ttl":300000}
 ```
 
-`BROWSERLESS_STEALTH` defaults to `true`. The control arm
-(`BROWSERLESS_STEALTH=false` → `"stealth":false`) proves the flag is genuinely
-wired rather than the value being incidental. Kernel: `stealth:false`,
-`headless:true` — so the Kernel default does select the profile that carries its
-stealth flag list.
+`BROWSERLESS_STEALTH` defaults to `true`. Full sensitivity matrix (E01b), which
+distinguishes a default from a constant and an unset variable from an empty one:
+
+| input | `stealth` sent |
+|---|---|
+| **(unset)** | **true** |
+| `""` | false |
+| `"1"` / `"true"` / `"TRUE"` | true |
+| `"0"` / `"false"` / `"yes"` | false |
+
+Note the inversion, which is the part worth internalising: **every
+plausible-looking "off" value disables it, so the only way to get stealth is to
+never configure the variable at all.** An operator who sets `=0` out of caution
+lands in the same place as one who sets `=false`; an operator who has never
+heard of it gets suppression enabled against every origin they visit.
+
+Kernel: `stealth:false`, `headless:true` — so the Kernel default does select the
+profile that carries its stealth flag list.
+
+Scope: this proves what agent-browser *sends*. Whether Browserless honours the
+field is a separate question this lab cannot reach.
 
 **`navigator.webdriver === true` by default (E03).** Confirmed from inside the
 page. The `--remote-debugging-port=0` → `AutomationControlled` → `webdriver`
