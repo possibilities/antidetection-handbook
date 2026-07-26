@@ -1,0 +1,89 @@
+{
+  "provenance": {
+    "when": "2026-07-26T07:22:30.237Z",
+    "agentBrowser": "agent-browser 0.32.3",
+    "agentBrowserBinary": "/Users/mike/Library/pnpm/bin/agent-browser",
+    "usingWrapper": false,
+    "chrome": "Google Chrome 150.0.7871.187",
+    "node": "v24.16.0",
+    "os": "darwin arm64",
+    "uname": "Darwin 25.5.0 arm64",
+    "gitCommit": "3dd1a1c",
+    "vendorDigests": {
+      "react-dom.production.min.js": "35f4f974f4b2bcd4",
+      "react.production.min.js": "d949f1c3687aedad"
+    }
+  },
+  "runs": [
+    {
+      "experiment": "e01-provider-stealth-default.mjs",
+      "exitCode": 0,
+      "confirmed": 5,
+      "refuted": 0,
+      "seconds": 1
+    },
+    {
+      "experiment": "e01b-stealth-sensitivity.mjs",
+      "exitCode": 0,
+      "confirmed": 8,
+      "refuted": 0,
+      "seconds": 2
+    },
+    {
+      "experiment": "e02-first-request-overrides.mjs",
+      "exitCode": 0,
+      "confirmed": 4,
+      "refuted": 3,
+      "seconds": 8
+    },
+    {
+      "experiment": "e03-identity-coherence.mjs",
+      "exitCode": 0,
+      "confirmed": 9,
+      "refuted": 2,
+      "seconds": 12
+    },
+    {
+      "experiment": "e04-react-value-tracker.mjs",
+      "exitCode": 0,
+      "confirmed": 5,
+      "refuted": 2,
+      "seconds": 15
+    },
+    {
+      "experiment": "e05-tab-propagation.mjs",
+      "exitCode": 0,
+      "confirmed": 4,
+      "refuted": 1,
+      "seconds": 16
+    },
+    {
+      "experiment": "e06-webrtc-gating.mjs",
+      "exitCode": 0,
+      "confirmed": 7,
+      "refuted": 0,
+      "seconds": 11
+    },
+    {
+      "experiment": "e07-protocol-identity.mjs",
+      "exitCode": 0,
+      "confirmed": 8,
+      "refuted": 1,
+      "seconds": 188
+    },
+    {
+      "experiment": "e08-realm-consistency.mjs",
+      "exitCode": 0,
+      "confirmed": 5,
+      "refuted": 1,
+      "seconds": 10
+    },
+    {
+      "experiment": "e09-drift-stability.mjs",
+      "exitCode": 0,
+      "confirmed": 4,
+      "refuted": 2,
+      "seconds": 463
+    }
+  ]
+}

@@ -44,6 +44,29 @@ wrong. Read the claim text before treating a run as a red build.
 | `e08` | The handbook's patch-completeness test, across four realms. |
 | `e09` | What is actually stable across cold runs? |
 
+## Reading the results
+
+A full run at the time of writing: **59 confirmed, 12 refuted** across ten
+experiments. Do not treat those twelve as a red build — every one is either a
+claim the *document* got wrong (since corrected) or a known limit of the
+harness. Nothing in the suite is currently broken.
+
+| experiment | refuted | why |
+|---|---|---|
+| `e02` | 3 | The `tab_new` leak assertions are phrased "does it carry the override" — refutation *is* the finding. Plus the UA-CH check and a CLI-`eval` targeting artefact. |
+| `e03` | 2 | `--user-agent` empties `userAgentData.brands` rather than leaving Chromium values. Document corrected. |
+| `e04` | 2 | `setvalue`/`clear` are unreachable from any shipped client, and the reachable `select` path updates React correctly. Document corrected — the claimed bug does not exist. |
+| `e05` | 1 | The containment arm's control; the ordinary-path verdict it exists to qualify is confirmed. |
+| `e07` | 1 | Header-comparison arm mispairs its clients when Chrome negotiates h2 (the origin decodes only HTTP/1.1). |
+| `e08` | 1 | The service worker does not receive the override — refutation *is* the finding. |
+| `e09` | 2 | JA3 and `supported_groups` are not stable across launches, because Chrome shuffles extension order. Refutation *is* the finding. |
+
+If you change the code under test, the useful signal is a *change* in this
+distribution, not the absence of refutations. Several of these should stay
+refuted until someone fixes the underlying behaviour — and `e08`'s and `e09`'s
+arguably forever, since they describe how the browser works rather than a
+defect.
+
 ## Design
 
 **The origin observes; the page reports.** `lib.mjs` starts a local HTTP origin
