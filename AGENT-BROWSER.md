@@ -4,7 +4,7 @@
 
 > **Source snapshot:** `possibilities--agent-browser@3cc7022271235694b5b5ce8aaea8bbfaa66e8cd5` — package version 0.33.0, but three commits past the `v0.33.0` tag (`v0.33.0-3-g3cc7022`), so do not resolve citations against the tag. Every `path:line` below resolves against **that exact object**.
 >
-> **Measurement snapshot:** the experiments in [`lab/`](./lab) ran against the **0.32.3** binary (`v0.32.3` = `81c336c`) and Chrome 150.0.7871.187. That is an older build than the source above, so a measured finding and a cited line can in principle describe different code; see [`lab/FINDINGS.md`](./lab/FINDINGS.md) for the reconciliation.
+> **Measurement snapshot:** the experiments in [`lab/`](./lab) were re-run against a binary built from **that same commit** (`agent-browser 0.33.0`, `cargo build --release` at `3cc7022`) on Chrome 150.0.7871.187. Source and measurement now describe one artifact. Caveat kept deliberately: a local release build is not byte-identical to a published release, so this validates the *source pin*, not a shipped binary.
 >
 > Pinning both is not ceremony. An earlier revision pinned neither, the tree advanced six commits mid-analysis, and **68 of 148 cited line numbers went stale** — citations into unchanged files were fine, which is why the damage was invisible. Nearly every underlying claim survived; **one did not** (§3.2, isolated worlds). That mix is the worst possible failure: the document still reads as authoritative, and the first citation a reader checks may not resolve.
 
@@ -14,7 +14,7 @@ Claims cite `path:line`. Where the answer is "this does not exist," it says so �
 
 **How to read this document.** Claims are not equally trustworthy, and the tag on each section says which kind it is:
 
-- **`[measured]`** — an experiment in [`lab/`](./lab) produced it, with a control proving the subject actually did something. Authoritative **for the measurement snapshot** (0.32.3 / Chrome 150) and needing revalidation against a newer build, since the source pin is already ahead of it. Evidence in [`lab/FINDINGS.md`](./lab/FINDINGS.md).
+- **`[measured]`** — an experiment in [`lab/`](./lab) produced it, with a control proving the subject actually did something. Authoritative **for the measurement snapshot** (0.33.0 built from the source pin, Chrome 150) and needing revalidation on a newer Chrome or a newer source pin. Evidence in [`lab/FINDINGS.md`](./lab/FINDINGS.md).
 - **`[source]`** — read from code, cited `path:line`, checked by more than one reader. Reliable for what the code *says*; silent about what it does at runtime.
 - **`[reasoned]`** — an inference nobody has run. A hypothesis with an expiry date.
 

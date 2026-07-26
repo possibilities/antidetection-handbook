@@ -5,23 +5,27 @@ it so it can be re-run. Where an observation contradicts
 [`../AGENT-BROWSER.md`](../AGENT-BROWSER.md), the observation wins and the
 document needs correcting.
 
-**Run environment:** macOS (Apple M4), **agent-browser 0.32.3** binary, Chrome
-150.0.7871.187 headless, node v24.16.0, React 18.3.1 (vendored, digest-pinned).
-Every claim here is version-specific.
+**Run environment:** macOS (Apple M4), **agent-browser 0.33.0** built from
+`3cc7022` (`cargo build --release`), Chrome 150.0.7871.187 headless, node
+v24.16.0, React 18.3.1 (vendored, digest-pinned). Every claim here is
+version-specific.
 
-**A gap worth knowing about.** The measurements above came from the 0.32.3
-binary; the source citations in [`../AGENT-BROWSER.md`](../AGENT-BROWSER.md) are
-pinned to `3cc7022` (v0.33.0). The tree advanced six commits during the analysis
-and the installed binary was never refreshed to match, so a measured finding and
-a cited line can describe different builds.
+**A gap that has now been closed, and how.** These results were originally
+produced on the 0.32.3 binary while the source citations were pinned to
+`3cc7022` (0.33.0) — six commits apart, because the tree advanced mid-analysis
+and the installed binary was never refreshed. A measured finding and a cited
+line could therefore have described different builds.
 
-Checked rather than assumed: all eight load-bearing claims spot-checked against
-`3cc7022` are still true there — `--remote-debugging-port=0`, the uuid temp
-profile, `setvalue`/`clear` reachable only from the dispatch table,
-`restrict_webrtc = !allowed_domains.is_empty()`, the `userAgent`-only
-`setUserAgentOverride`, `BROWSERLESS_STEALTH`, the `--args` help example, and the
-iOS preset UA. Line numbers moved by up to 190; the behaviour did not. Re-running
-`run-all.mjs` against a 0.33.0 binary is the clean fix and has not been done.
+The suite was rebuilt from the source pin (`cargo build --release` at
+`3cc7022`) and re-run in full. The result is **identical, claim by claim**: all
+71 assertions across ten experiments produced the same outcome on 0.33.0 as on
+0.32.3, not merely the same totals. Checking the totals alone would not have
+been enough — two claims could have swapped without moving the count.
+
+So the findings below hold for both builds, and the dual snapshot in the
+companion header has collapsed to one. The residual caveat is narrow: a local
+release build is not byte-identical to a published artifact, so this validates
+the source pin rather than a shipped binary.
 
 ---
 
@@ -157,7 +161,7 @@ answer went the other way.
 
 **Two of the four "terminal synthetic write" sites are unreachable.** The
 strings `"setvalue"` and `"clear"` appear only in the daemon dispatch table
-(`actions.rs:2442`, `:2326`). No shipped client emits either action — not
+(`actions.rs:2442`, `:2452`). No shipped client emits either action — not
 `commands.rs`, not `mcp.rs`, not `main.rs`. They are latent defects in code
 nothing can call.
 
