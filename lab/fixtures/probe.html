@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>lab probe</title>
+<body>
+<h1 id="status">collecting…</h1>
+<script>
+// The page reports its own view of itself back to the lab origin. This removes
+// all ambiguity about which target a CLI `eval` would have hit: whatever
+// context loaded this document is the context that reports, and the origin
+// correlates it with the request headers it saw for this very navigation.
+(async () => {
+  const out = { kind: 'probe', href: location.href, ts: Date.now() };
+
+  const nav = navigator;
+  out.userAgent = nav.userAgent;
+  out.platform = nav.platform;
+  out.languages = [...(nav.languages || [])];
+  out.webdriver = nav.webdriver;
+  out.hardwareConcurrency = nav.hardwareConcurrency;
+  out.deviceMemory = nav.deviceMemory ?? null;
+  out.maxTouchPoints = nav.maxTouchPoints;
+
+  // UA-CH: the low-entropy set is on userAgentData; high-entropy needs a call.
+  if (nav.userAgentData) {
+    out.uaData = {
+      brands: nav.userAgentData.brands,
+      mobile: nav.userAgentData.mobile,
+      platform: nav.userAgentData.platform,
+    };
+    try {
+      out.uaHighEntropy = await nav.userAgentData.getHighEntropyValues([
+        'architecture', 'bitness', 'model', 'platformVersion', 'fullVersionList',
+      ]);
+    } catch (e) {
+      out.uaHighEntropy = 'error:' + e.name;
+    }
+  } else {
+    out.uaData = null;
+  }
+
+  out.screen = {
+    width: screen.width, height: screen.height,
+    availWidth: screen.availWidth, availHeight: screen.availHeight,
+    dpr: devicePixelRatio, colorDepth: screen.colorDepth,
+    innerWidth: innerWidth, innerHeight: innerHeight,
+  };
+  out.media = {
+    hover: matchMedia('(hover: hover)').matches,
+    finePointer: matchMedia('(pointer: fine)').matches,
+    coarsePointer: matchMedia('(pointer: coarse)').matches,
+  };
+  out.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  // WebGL renderer, the classic cohort tell.
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const dbg = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    out.webgl = gl ? {
+      vendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null,
+      renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null,
+    } : null;
+  } catch (e) { out.webgl = 'error:' + e.name; }
+
+  // Tool-branded page surface. §3.2 of the companion claims these exist.
+  out.abGlobals = Object.getOwnPropertyNames(window).filter((k) => /^__AB_|agent.?browser/i.test(k));
+  out.reactHook = '__REACT_DEVTOOLS_GLOBAL_HOOK__' in window;
+
+  // Are the domain-filter wrappers installed, and do they look native?
+  const nativeish = (f) => { try { return Function.prototype.toString.call(f).includes('[native code]'); } catch { return 'threw'; } };
+  out.nativeness = {
+    fetch: nativeish(window.fetch),
+    XMLHttpRequest: nativeish(window.XMLHttpRequest),
+    WebSocket: nativeish(window.WebSocket),
+    EventSource: nativeish(window.EventSource),
+    sendBeacon: nativeish(navigator.sendBeacon),
+    RTCPeerConnection: typeof RTCPeerConnection === 'function' ? nativeish(RTCPeerConnection) : 'absent',
+  };
+  try { new RTCPeerConnection(); out.rtcConstructs = true; }
+  catch (e) { out.rtcConstructs = 'threw:' + (e.name || String(e)); }
+
+  await fetch('/__collect', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(out),
+  });
+  document.getElementById('status').textContent = 'collected';
+  document.title = 'collected';
+})();
+</script>
+</body>

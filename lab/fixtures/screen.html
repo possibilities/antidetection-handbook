@@ -1,0 +1,8 @@
+<!doctype html><meta charset=utf-8><title>screen</title><script>
+fetch('/__collect',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+  screen:[screen.width,screen.height], avail:[screen.availWidth,screen.availHeight],
+  inner:[innerWidth,innerHeight], outer:[outerWidth,outerHeight], dpr:devicePixelRatio,
+  viewportWiderThanScreen: innerWidth > screen.width,
+  viewportTallerThanScreen: innerHeight > screen.height
+})});
+</script>
