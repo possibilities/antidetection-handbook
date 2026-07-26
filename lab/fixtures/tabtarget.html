@@ -1,0 +1,8 @@
+<!doctype html><meta charset=utf-8><title>tab target</title>
+<img src="/sub-image.png" alt="">
+<script>
+// A subresource (above) and a page-initiated fetch (below). Together with the
+// navigation itself these give three request classes from the same tab, which
+// is what distinguishes an ordering race from a propagation failure.
+fetch('/from-js.json').catch(()=>{});
+</script>

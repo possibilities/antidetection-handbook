@@ -183,6 +183,70 @@ absent: no `keydown`, no `keyup`. `Input.insertText` produces a trusted `input`
 with no keystrokes at all, so a page listening for key events sees a value
 materialise from nothing.
 
+### 6. `tab_new` is a propagation failure, not an ordering race (E05)
+
+§3.4 hedged between the two. Three request classes from the same new tab, with
+a launch-level sentinel UA:
+
+| request from the new tab | User-Agent |
+|---|---|
+| the navigation itself | default |
+| a subresource (`<img>`) | default |
+| a page-initiated `fetch()` | default |
+
+All three. The override never reaches the new target **at all** — it is not that
+the first request outruns the configuration. The fix is therefore larger than
+"create at `about:blank` then navigate": new targets need an initializer that
+replays identity and init scripts, or nothing target-scoped will ever apply to
+them.
+
+### 7. WebRTC containment is wired to the allowlist, not the proxy (E06)
+
+The top work-list item, 7/7 confirmed against the stock binary:
+
+| configuration | `new RTCPeerConnection()` |
+|---|---|
+| nothing set | constructs |
+| `--allowed-domains` | **throws `SecurityError`** |
+| `--proxy` only | **constructs — the leak** |
+
+A proxied session with no allowlist has no WebRTC containment, exactly as
+claimed. Also observed under containment, correcting §3.2's count: of the six
+page APIs, `fetch`, `WebSocket`, `EventSource`, `sendBeacon` and
+`RTCPeerConnection` report non-native, but **`XMLHttpRequest` reports
+`[native code]`**. Four wrappers plus one hard block, not five plus one.
+
+---
+
+## A confound that invalidated part of an earlier round
+
+**The `agent-browser` on `PATH` here is a wrapper, not the binary.** At line
+1080 it always execs the stock binary with `--cdp <endpoint>`, attaching to a
+browserctl-managed browser rather than launching one. Every experiment before
+E06 ran against a browser this project did not launch.
+
+Found only because the E05 containment arm failed with
+`--allowed-domains is not supported with --cdp because WebRTC containment
+cannot be installed` — a real finding in its own right: **containment is
+unavailable in CDP-attach mode**, so in a browserctl-backed setup it can never
+be switched on.
+
+What this invalidated, and what survived re-measurement against the stock
+binary (`AB_BIN=$(pnpm bin -g)/agent-browser`, `AGENT_BROWSER_NATIVE=1`):
+
+| finding | status |
+|---|---|
+| provider stealth defaults (E01/E01b) | unaffected — no browser involved |
+| React tracker and reachability (E04) | unaffected — browser-side and source-level |
+| UA override / UA-CH suppression (E03) | unaffected — same post-attach CDP path |
+| `navigator.webdriver === true` | **weakened** — cannot be attributed to agent-browser's launch line |
+| screen 800×600 / viewport 1280×633 / outer 0×0 | **re-measured natively, holds identically** |
+
+The lesson generalises past this repo: verify what your harness is actually
+driving before trusting a single result. A wrapper that transparently changes
+launch into attach produces plausible numbers for a different subject, and
+nothing in the output says so.
+
 ---
 
 ## Harness bugs worth remembering

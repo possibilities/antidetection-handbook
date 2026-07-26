@@ -137,13 +137,21 @@ export async function startMockProvider() {
 
 /** Run the agent-browser CLI. Never throws on non-zero exit — several
  *  experiments expect failure after the observation has already been made. */
+// The `agent-browser` on PATH may be a wrapper. In this environment it always
+// execs the stock binary with `--cdp <endpoint>`, attaching to a browserctl-
+// managed browser instead of launching one — which silently invalidates any
+// claim about agent-browser's own launch line. Set AB_BIN (and AGENT_BROWSER_NATIVE=1)
+// to drive the stock binary directly.
+export const AB_BIN = process.env.AB_BIN || 'agent-browser';
+export const NATIVE_ENV = process.env.AB_BIN ? { AGENT_BROWSER_NATIVE: '1' } : {};
+
 export function ab(args, { env = {}, unsetEnv = [], timeoutMs = 90_000 } = {}) {
   return new Promise((resolve) => {
-    const merged = { ...process.env, ...env };
+    const merged = { ...process.env, ...NATIVE_ENV, ...env };
     // An UNSET variable and an empty one are different inputs. Several defaults
     // read `.unwrap_or(true)`, which an empty string would silently defeat.
     for (const k of unsetEnv) delete merged[k];
-    const child = spawn('agent-browser', args, {
+    const child = spawn(AB_BIN, args, {
       env: merged,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
