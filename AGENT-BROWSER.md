@@ -24,7 +24,7 @@ Second, and more importantly: **the Browserless provider requests stealth by def
 
 So the available work splits into three piles.
 
-1. **Fidelity work that is also correctness work.** Real GPU, headful, real fonts, persistent profile, stable egress, coherent locale/timezone. These make the browser genuinely more ordinary rather than pretending to be, they fix real rendering bugs, and none of them require anyone's permission. This is where nearly all the value is.
+1. **Fidelity work that is also correctness work.** Real GPU, headful, real fonts, persistent profile, stable egress, coherent locale/timezone. These make the browser genuinely more ordinary rather than pretending to be, and they fix real rendering bugs. They do not *inherently* suppress automation signals — but that is a narrower claim than "needs no permission," because any of them can still be enforcement-conditioned, and §5 sorts that on three axes rather than one. This is where nearly all the value is.
 2. **Coherence bugs worth fixing on their own merits.** Mixed input provenance (§3.1), branded identifiers in page scope (§3.2), no identity manifest (§3.3), and a UA override that changes the string but not the Client Hints (§3.4). All four are defects regardless of detection; §3.4 currently leaves a client *worse off* than not using the flag.
 3. **Suppressing truthful automation signals.** Requires the site owner's express permission per the handbook's own rules. Because this is already reachable, the work here is adding a gate and retiring the help-text recommendation — not building a feature (§5).
 
@@ -80,7 +80,7 @@ Persistent profiles are supported via `--profile`; they are simply not the defau
 
 **One sharp edge inside `--profile` itself.** It persists only in its *path* form. Given a Chrome profile **name**, `chrome.rs:557-573` locates your real Chrome user-data directory, **copies** the profile to a temp dir, and rewrites the option to point at the copy — then hands that temp dir to `ChromeProcess.temp_user_data_dir` (`chrome.rs:588`), where the same `Drop` deletes it. So `agent-browser --profile Default` reads your existing login state and discards every write the session makes. That is defensible as a safety property (your real profile is never mutated) but it is the opposite of what "persistent profile" implies, and anyone reaching for `--profile` to build continuity needs to pass a path.
 
-The `--remote-debugging-port=0` choice deserves emphasis because it is easy to misread as incidental. Chromium special-cases it deliberately: port `0` is the ephemeral port ChromeDriver uses, so it counts as automation, whereas a fixed port is assumed to be a developer attaching a debugger and leaves the feature unset. The handbook covers this in *Automation signals and control stacks*. agent-browser therefore reports its automation status truthfully by default — the cooperative behavior, arrived at as a side effect.
+The `--remote-debugging-port=0` choice deserves emphasis because it is easy to misread as incidental. Chromium special-cases it deliberately: port `0` is the ephemeral port ChromeDriver uses, so it counts as automation, whereas a fixed port is assumed to be a developer attaching a debugger and leaves the feature unset. The handbook covers this in *Automation signals and control stacks*. The local native Chrome path therefore reports its automation status truthfully by default — the cooperative behavior, arrived at as a side effect. §2.4 covers where that stops being true.
 
 **Protocol surface.** `Runtime.enable`, `Page.enable`, and `Network.enable` are issued on session setup (`browser.rs:657-708`, `actions.rs:2754-2760`, `state.rs:164-167`). `Runtime.enable` is the classic CDP tell. The V8 changes of May 2025 killed the popular `Error.stack` side-effect detector, but execution-context disclosure remains observable, and it is a hypothesis to re-measure per Chrome release rather than a settled fact.
 
@@ -106,7 +106,7 @@ These are not accidents or leftovers. They are documented product features: `REA
 
 So the accurate statement about this project is: **the local Chrome path is honest by default; the Browserless path requests stealth by default.** A user who types `agent-browser --provider browserless open <url>` has asked a third-party service to suppress automation signals against an origin, without ever seeing the word "stealth," and with no authorization gate anywhere in the path. That belongs in §5's second pile, and flipping the default is a smaller diff than anything currently on the no-regret list.
 
-**The rest of the Kernel path is the direct link to the handbook.** The Kernel provider's server side is the image audited in *What Kernel's public image repo implements*. Everything in that section applies to this backend, and three items are operationally significant here:
+**The rest of the Kernel path is the closest link to the handbook — but keep the evidence honest.** The Kernel provider talks to a hosted service; the handbook audits Kernel's *public image* and explicitly disclaims visibility into hosted control planes and private layers. The client proves only which endpoint and options it requests. It cannot establish the hosted image digest, whether the API runs as root there, what CA material exists, or which flags are effective. So treat the audit as a **comparator** for the hosted backend rather than a description of it, and require provider attestation or first-party measurement before importing its conclusions. With that caveat, three items are operationally significant:
 
 - **Headless and headful are asymmetric, and the client chooses — badly, by default.** Kernel's "headless+stealth" default flag list applies only to the headless profile and only when `CHROMIUM_FLAGS` is empty. agent-browser selects the profile via `KERNEL_HEADLESS`, defaulting to **`true`** (`providers.rs:400-402`, posted at `:411-415`). So the default Kernel session lands on precisely the profile that carries the stealth flag list. `KERNEL_STEALTH` defaulting to `false` does not offset this: the two are separate knobs, and the flag list travels with the headless profile regardless.
 - **A fixed persistent profile, partly client-selected.** Kernel uses one persistent `/home/kernel/user-data`, and the client can name a profile via `KERNEL_PROFILE_NAME` (`providers.rs:417-424`). Profile continuity is therefore *influenced* by the client but owned by the server — do not assume a session is isolated from previous ones just because you did not ask for continuity.
@@ -128,7 +128,7 @@ That is `read.rs:13`, sent at `read.rs:331`. This is a fifth cohort with a JA3/J
 
 This applies to the **URL-argument form only**. `handle_read` (`actions.rs:4237-4278`) has two shapes: given a URL it calls `run_read` (`:4249`), the reqwest path described here; given no URL it makes no HTTP request at all, instead extracting from the browser's already-fetched HTML via `read_json_from_active_html` (`:4274`) and requiring a live browser. So `read` never launches or escalates to a browser — the framing holds — but in the no-URL form neither the rustls handshake nor the honest UA ever happens, because there is no request.
 
-Two things follow. First, the URL form belongs in the §6 measurement matrix as its own baseline; a harness that only profiles the CDP backends will miss it entirely. Second, and worth noticing: **`read` already does what §5 recommends.** It identifies itself honestly, in the header a site actually reads, with a version string an operator could allowlist. It is the declared-identity posture, shipped, in the cheapest code path in the project. If the argument in §5 seems abstract, this is the concrete precedent — and the obvious place to attach a Web Bot Auth signature first, since it has no browser stack to reconcile.
+Two things follow. First, the URL form belongs in the §6 measurement matrix as its own baseline; a harness that only profiles the CDP backends will miss it entirely. Second, and worth noticing with one caveat: **`read` already does the transparent half of what §5 recommends.** It self-identifies honestly in the header a site actually reads. But a UA string is *not* declared identity in the sense §5 means — any client can send those bytes, so it is unauthenticated self-description, useful for courtesy and log correlation and useless as an allowlist key. Reserve "declared identity" for authenticated credentials and signatures. If the argument in §5 seems abstract, this is the concrete precedent — and the obvious place to attach a Web Bot Auth signature first, since it has no browser stack to reconcile.
 
 ---
 
@@ -165,7 +165,9 @@ What remains in `fill` is a provenance contradiction rather than a correctness b
 
 ### 3.2 Branded identifiers and unmasked wrappers in page scope
 
-Two separate injections put a stable, greppable tool name into page-reachable state. An `__AB_` or `_agentBrowser` prefix is exactly as identifying as ChromeDriver's `cdc_` properties or Puppeteer's `pptr:` source URLs: any site that has seen agent-browser once can detect it forever with a one-line check.
+Several separate injections put a stable, greppable tool name into page-reachable state, and the DOM mutations are the ones most likely to be on. Beyond the two script injections below, the snapshot and locator paths write branded **attributes and nodes** into the live document: `data-agent-browser-located` on semantic-locator targets (`actions.rs:8084`, queried at `:8111`, removed at `:8123`), `data-__ab-ci` on cursor-enriched snapshots, and an `__agent_browser_annotations__` overlay element for screenshots. A `MutationObserver` sees every one of them, and unlike the profiler globals these ride ordinary snapshot and click flows rather than an opt-in flag.
+
+They are also a correctness risk, not only an observability one: the cleanup at `:8123` strips the attribute unconditionally, so a page that already used `data-agent-browser-located` for its own purposes loses it. Prefer backend node IDs or `Runtime.callFunctionOn` object references over marking the DOM at all; failing that, preserve any prior value and use a per-operation random suffix. An `__AB_` or `_agentBrowser` prefix is exactly as identifying as ChromeDriver's `cdc_` properties or Puppeteer's `pptr:` source URLs: any site that has seen agent-browser once can detect it forever with a one-line check.
 
 **The profiler globals.** `RENDERS_INIT` installs `__AB_RENDERS__`, `__AB_RENDERS_ACTIVE__`, `__AB_RENDERS_FPS__`, `__AB_RENDERS_START__`, and `__AB_RENDERS_ORIG_COMMIT__` (`react/scripts.rs`). These do require `--enable react-devtools` (or its `react` alias, `actions.rs:3222`), since `RENDERS_INIT` early-returns without the DevTools hook (`react/scripts.rs:202-203`), and the hook is installed only under that flag (`actions.rs:3211-3228`, injected at `actions.rs:3223` and the CDP call at `browser.rs:1487`).
 
@@ -183,7 +185,9 @@ This matters more than the profiler globals for a simple reason: it is attached 
 
 The cheap paths are `Runtime.addBinding`, which gives page-to-client communication without a page global, or simply a per-launch randomized property name, which keeps the channel and destroys its value as a stable signature. Take the second unless the plumbing is wanted for other reasons. Separately, rename `_agentBrowserInstallDomainFilter` to something unbranded so the worker-bootstrap source stops carrying the tool's name — that one genuinely is a one-line change.
 
-For the domain filter, **move the five HTTP-shaped wrappers to CDP `Fetch`/`Network` interception**. Nothing is patched, so nothing needs disguising, and enforcement gets stronger because page code cannot reach around it.
+For the domain filter, the honest task is **"prove which wrappers are redundant,"** not "move them to CDP." An earlier draft said the five HTTP-shaped wrappers could move to `Fetch`/`Network` interception and nothing would be patched. That is wrong, and the code says so itself: `install_domain_filter` already installs **both** layers, and its doc comment (`network.rs:456-467`) states the JS layer exists precisely "for APIs outside Fetch interception, including workers, WebSocket, EventSource, sendBeacon, and RTCPeerConnection." Four of the five are documented as beyond Fetch's reach, and the script also wraps `Worker`, `SharedWorker`, and `importScripts`, which §3.2's inventory did not count.
+
+Realistically only `fetch` and `XMLHttpRequest` are candidates for removal, and even that needs proof rather than assumption. Before deleting any layer, build a parity matrix — page × same-origin iframe × OOPIF × popup × dedicated/shared/service worker, crossed with fetch, XHR, WebSocket, EventSource, beacon, and redirect — and show the protocol layer actually covers the cell. Removing a wrapper that CDP does not replace converts an observability improvement into a containment hole.
 
 **The `RTCPeerConnection` block has to stay in the page, and that limit is not negotiable.** CDP's `Fetch` and `Network` domains intercept HTTP; a peer connection is not an HTTP request, and no CDP domain lets you refuse its construction. There is no protocol-layer replacement, so "move enforcement to CDP" covers five of six APIs and zero of the WebRTC control. Anyone implementing this needs to know that before they delete the in-page block and quietly remove the primary containment while believing they replaced it.
 
@@ -237,8 +241,10 @@ Requirements still divide, though, and the split runs through the requirement li
 Each tier declares what it can do. A job declares what it needs. Selection is a match, computed before launch:
 
 ```text
-Tier 0  Lightpanda / no-JS extraction
-          provides: HTTP fetch, static content, no JS execution
+Tier 0  `read` (URL form) — no JS at all; Lightpanda — its own JS runtime,
+          not Blink, driven through Runtime.evaluate
+          provides: HTTP fetch, static content; Lightpanda adds a partial
+                    JS/DOM subset — enumerate it, do not assume Chrome parity
 
 Tier 1  Native CDP + headless Chrome, SwiftShader
           provides: JS execution, DOM, software canvas/WebGL,
@@ -254,9 +260,25 @@ Tier 3  Remote provider (Kernel et al.), managed environment
                     — see §4.3, this tier also changes identity
 ```
 
-A job declaring `needs: [js, persistent-login]` selects tier **1** — persistence is orthogonal to headfulness, and `--profile` works identically at either tier. Only a genuine rendering, font-metric, or extension requirement justifies tier 2. A job declaring nothing starts at tier 0. The requirement list is a small, auditable artifact that belongs in the identity manifest (§3.3), and writing it down is most of the work — it forces the caller to say what the task actually needs instead of discovering it by failure.
+A job declaring `needs: [js, persistent-login]` selects tier **1** — persistence is orthogonal to headfulness, and `--profile` works identically at either tier. Only a genuine rendering, font-metric, or extension requirement justifies tier 2. A job declaring nothing starts at tier 0.
 
-**Failure-driven promotion still has a narrow, guarded place**, because requirements are sometimes discovered rather than known: a page turns out to need JS that the caller did not anticipate. Permit it only where the evidence is *positive and structural* rather than an absence — the response body contains script tags and a mount point, so the content is demonstrably JS-rendered — and never on a bare absence like "empty result" or "selector missing," which is precisely what a challenge also produces. Everything else is a stop-and-diagnose, per §4.3.
+**The obvious attack on this design, which has to be closed or the inversion is theatre.** Declared requirements are *assertions*, not observations, so they can launder a denial across sessions:
+
+> Job A runs at tier 0, hits an ambiguous blank page, and correctly stops. An operator — or a retry wrapper — resubmits the same work as job B with `needs: [js]`, justified by nothing except what happened to job A. Job B now selects the higher tier *before launch* and never touches a promotion rule at all.
+
+Every guard in §4.2 and §4.3 is bypassed, and the audit trail looks clean. A requirement inferred from a prior target failure is still failure-derived, and starting a new session does not launder it.
+
+So the requirement artifact has to carry provenance and be **frozen before first contact** with the target. Three things must be separate records rather than one blob:
+
+1. **Task requirements** — immutable, with issuer, scope, and *when and from what they were established*. Written before the first observation of the target.
+2. **Method authorization** — which methods are permitted against which origins, by whom (§4.3).
+3. **The resolved environment manifest** — what actually got launched (§3.3).
+
+If (1) cannot cite a source that predates contact with the origin, it is not a requirement; it is a promotion wearing a requirement's clothes. Attempt lineage has to survive across sessions for this check to mean anything, which is a real piece of engineering and does not exist in the codebase today.
+
+**Failure-driven promotion has one narrow opening, and page content is not it.** The tempting rule is "the body has script tags and a mount point, so it is demonstrably JS-rendered" — but a challenge shell and a server-rendered hydration page both look exactly like that. Page-authored evidence cannot establish anything, because a bot control authors pages too.
+
+The only promotion authority on an unowned origin is a **closed enum** of two entries: a requirement fixed before first contact (§4.1 selection, not a promotion at all), or **typed engine-originated capability telemetry** — the engine itself raising `not implemented` or refusing an unsupported API. That signal comes from your own runtime rather than from the target, which is what makes it trustworthy. DOM shape, framework bundles, selector misses, page-authored error strings, and HTTP status text are **diagnostic only**: log them, never let them authorize a transition.
 
 Note what this buys beyond correctness: the ambiguity problem does not arise for jobs that never fail. Requirement-driven selection is not just safer than failure-driven promotion, it is the faster architecture.
 
@@ -280,9 +302,9 @@ and in the agent rules:
 
 | Trigger | Verdict |
 |---|---|
-| Page rendered blank; content requires JS | Promote |
-| WebGL required, SwiftShader output insufficient | Promote |
-| Selector never appeared; DOM lacks the element | Promote |
+| Requirement fixed **before first contact** (declared WebGL, extension, persistent login) | Select the matching tier at launch — this is §4.1, not a promotion |
+| Typed engine-originated capability error (`not implemented`, unsupported API) | Promote |
+| Page rendered blank, or selector never appeared | **Stop and diagnose** — a challenge shell and an unrendered SPA are indistinguishable here |
 | Transport error or browser crash | Retry at the same tier |
 | Navigation timeout | Retry within a per-origin budget; stop when the per-origin rate spikes while the fleet is healthy (§4.3) |
 | **HTTP 403 from a bot control** | **Stop** |
@@ -308,11 +330,11 @@ The obvious escape hatch — record the rendering requirement in per-origin poli
 
 **The rule underneath, which is what to actually implement:**
 
-> On origins you own or are expressly authorized against, promote freely — the ambiguity does not matter, because you are entitled to the access either way. On any other origin, never promote on an unexplained lower-tier failure.
+> **An unexplained runtime failure may never change the environment on an origin you do not own.** Where an authorization record exists, a transition is permitted only if it stays inside that record's exact terms.
 
-That is one sentence, it is enforceable in `policy.rs` as an origin-class lookup rather than a free-text justification field, and it is honest about where the line actually falls.
+Note what the second clause does *not* say. "You are entitled to the access, so promote freely" is wrong, and it contradicts the handbook this document companions: *permission to access a site does not by itself authorize concealing automation status*. Authorization is **method-specific**. A record covering access does not silently extend to a different provider, a different geography, a suppression flag, an extension, a patched control stack, or a profile you did not declare. Nor does owning `app.example` transitively authorize the embedded identity provider or challenge vendor whose origins the page pulls in. So the check is a match against the record's `(origins, purpose, methods, provider config, identity deltas, artifact digests, expiry)` — not an origin-class boolean.
 
-**It also forces an admission the four-tier picture obscures.** Almost no third-party origin has an authorization record. So for most unowned traffic the ladder is not four tiers — it is tier 0 to tier 1 on declared requirements, and then stop. The upper half exists for origins you own, for authorized engagements, and for jobs whose requirements were declared up front. An engineer should know that before building four tiers and discovering that two of them are unreachable for the traffic they actually have.
+**One correction to a claim an earlier draft of this section made.** I previously concluded that for unowned origins the ladder is "really two tiers." That is the wrong invariant. Up-front requirements are exempt by construction, so an unowned third-party job with a genuine hardware-WebGL, font-metric, accessibility-extension, or cloud-GPU need can legitimately select tier 2 or 3 at launch — and conversely a dishonest declaration can preselect them, which is what the provenance rule in §4.1 exists to catch. The policy constrains **the source of a transition**, never the tier count. Tier cardinality was a proxy, and a misleading one.
 
 **A 403 that is not a bot control.** Geo-restriction, expired credentials, and genuinely missing authorization all return 403, and only some are bot controls. Do not build a classifier that tries to tell them apart in order to decide whether to keep going. Default 403 to `STOP` and let the per-origin policy carve out the known-benign cases explicitly. A conservative default that occasionally halts a legitimate job is recoverable; a permissive default that occasionally evades enforcement is not.
 
@@ -334,7 +356,9 @@ The general principle: **when the trigger is ambiguous, the cascade must not pro
 
 A rule that only says *stop* will be removed by the first engineer whose job needs doing. If the cascade halts and the caller simply gets a failure, the pressure to add "just one more tier" is enormous and eventually irresistible — so the stop path needs a destination, not just a brake.
 
-Make `STOP` produce a **diagnostic and a decision point**, not a dead end: what was attempted, at which tier, what was observed, why it was classified as enforcement rather than capability, and what an operator's options are. Those options are legitimate and worth enumerating in the output, because they are what makes the boundary survivable — request access or an API key from the origin; use an official API if one exists; run against an owned staging instance instead; confirm the origin is in scope at all; or decide the job should not run.
+**`STOP` also has to be a state, not a log line.** As described so far it is a diagnostic, and a diagnostic does not stop anything: the next command in the same session can change options and carry on, because `DaemonState` tracks confirmation but has no notion of a stopped job attempt. Make it **job-scoped and absorbing** — it must block further target traffic, retries, relaunches, and environment changes for that attempt lineage; quarantine or close the browser; release profile, account, and egress leases; and persist the disposition so a later session cannot silently resume. Resumption is a *new* job with newly validated method-specific authority, not a continuation.
+
+Then make it produce a **diagnostic and a decision point**: what was attempted, at which tier, and what was observed. Report a typed disposition — `explicit_enforcement`, `ambiguous_default_stop`, `policy_denial`, `retry_budget_exhausted` — plus the rule that fired and the residual uncertainty. Do **not** ask it to report "why this was enforcement rather than capability": §4 opens by establishing that the cause is unobservable, and ambiguity is itself the trigger. A stop record that invents a cause is worse than one that says it does not know. Alongside the disposition, give the operator their real options. Those options are legitimate and worth enumerating in the output, because they are what makes the boundary survivable — request access or an API key from the origin; use an official API if one exists; run against an owned staging instance instead; confirm the origin is in scope at all; or decide the job should not run.
 
 This is also where the handbook's human-in-the-loop boundary sits, and it is narrower than it first looks. A human deciding *whether to seek authorization* is an ordinary business decision and entirely appropriate. A human being handed the challenge to solve so the automation can continue is the thing both documents prohibit. The difference is whether the person is exercising judgment about the engagement or acting as a CAPTCHA-solving subroutine.
 
@@ -348,7 +372,13 @@ There is a legitimate version of site-specific configuration, and it is worth bu
 
 ### 4.6 Where this plugs in
 
-`cli/src/native/policy.rs` already has the right primitive: an `ActionPolicy` returning `Allow`, `Deny`, or `RequiresConfirmation`, loaded from JSON, with an `AGENT_BROWSER_CONFIRM_ACTIONS` env override. Today it gates *actions*. Extend the same mechanism to gate origins and tier promotions, and the cascade gets an auditable policy layer instead of scattered conditionals.
+`cli/src/native/policy.rs` has an `ActionPolicy` returning `Allow`, `Deny`, or `RequiresConfirmation`, loaded from JSON with an `AGENT_BROWSER_CONFIRM_ACTIONS` env override. It is the closest existing thing — but calling it "already the right primitive," as an earlier draft did, overstates it in three ways that matter:
+
+- **It fails open.** `load_if_exists()` is `Self::load(&path).ok()` (`policy.rs:76-80`), so an unreadable or malformed policy file becomes `None` and every check is skipped. Reload errors are discarded too (`let _ = policy.reload()`, `actions.rs:2085`). An authorization gate that disappears when its config is broken is not a gate.
+- **Confirmation is not authorization.** A human clicking yes is not the site owner's approving record, and the schema has nowhere to put one.
+- **It is the wrong granularity.** The policy holds flat action-name lists, but the things needing control are process-wide: `--args`, `--extension`, and init scripts registered for *every future document*. A per-origin action check cannot contain a launch flag that has already been applied to the browser, or an init script that will run on the next redirect, popup, frame, or worker.
+
+So the authorization record belongs in a separate, **required** artifact. Merge CLI, env, config, plugin, and provider mutations into one effective launch plan; validate that plan fail-closed *before* launch; and bind the resulting session to its authorized origin set across redirects, popups, frames, workers, and later navigation. `ActionPolicy` can stay for what it is good at — gating individual actions — but it cannot carry this.
 
 There is currently **no backend or provider cascade** in the codebase — I searched for one specifically. Retry and fallback logic does exist elsewhere — transient IPC handling in `cli/src/connection.rs:1005-1081`, daemon respawn in `main.rs:1675`, a three-attempt Chrome launch retry with a 500 ms backoff in `chrome.rs:577-605`, download retry in `install.rs:256`, accessibility-tree re-query in `element.rs:345` and `:516`, and a content-extraction fallback ladder in `read.rs` — but none of it switches backend or provider. The cascade would be new construction, so it can be built with the stop-state in it from the first commit rather than retrofitted — which is the only time these boundaries actually hold.
 
@@ -362,13 +392,28 @@ Splitting the ask honestly requires a test, because the obvious objection to any
 
 With the referent fixed, the sorting works. A real GPU means the browser genuinely renders with that GPU. Fonts matched to the real OS mean it genuinely has them. Nothing asserted becomes false under inspection. By contrast `--disable-blink-features=AutomationControlled` makes a truthful signal report falsely, `--user-agent` without metadata makes the client contradict itself on the first request, and a macOS font corpus on Linux is a claim about a machine that does not exist. First-pile work also **degrades gracefully** where second-pile work breaks: a font cohort that drifts with an OS update is slightly stale, while a shim that drifts is a contradiction. (Drift still happens — §6 exists because of it.)
 
-Two things the test does not do. It says nothing about **motive**, and one case genuinely needs motive to sort: a persistent profile is authentically aged whether you are testing session continuity or manufacturing an appearance of humanity, and no property of the change distinguishes those. That case is irreducible; call it a judgment call rather than pretending the test covers it. And a sufficiently complete first pile does converge on "indistinguishable from an ordinary browser" — which is the point, not a loophole, because an authorized automation client *is* an ordinary browser operated by someone with permission. The test only stops working if you are laundering second-pile changes through first-pile language, which is why the gate on the second list matters more than the list itself.
+**But truthfulness is a coherence property, not an authorization property, and an earlier draft of this section conflated them.** The counterexample is short: rent a genuine Mac with a real GPU and a real font corpus, *because* your truthful Linux environment was refused. Every statement it makes is true, it survives arbitrarily deep inspection, and it passes the test above — and it is still an enforcement-conditioned identity change, forbidden by §4 for reasons that have nothing to do with truth. The motive problem is not confined to aged profiles; it applies to **every** bullet below.
 
-**Available, valuable, and requires no one's permission — do all of this:**
+The test also runs the other way. Privacy normalization and farbling, and browser-supported compatibility or accessibility emulation, all deliberately report values that differ from the physical hardware — and none inherently requires a site owner's permission. Tor Browser is not lying to anyone. So "differs from the hardware" does not imply "needs authorization" any more than "matches the hardware" implies "does not."
+
+Sort on **three independent axes** instead of one:
+
+| Axis | Question | Failure looks like |
+|---|---|---|
+| **Coherence** | Is the configuration one a real instance of the declared cohort would have, and is that cohort what is actually running? | UA says Windows, fonts say Linux |
+| **Purpose and trigger** | Why this change, and was it conditioned on an origin refusing you? | Switched hosts after a 403 |
+| **Method authorization** | Is this method permitted against this origin, by a record that says so? | Suppression flag with no approving party |
+
+A change needs all three. The test earlier in this section answers only the first, which is why it belongs in the coherence chapter and not in a permissions argument. "Environment actually running" is itself layered — host, VM, container, vGPU, virtual display, browser policy — so name the layer you mean rather than treating it as self-evident.
+
+That also means the heading below is mis-titled if read as a permission claim. These items **do not inherently suppress automation signals**; they still require ordinary authority over the workload, data, and network, and they must not be enforcement-conditioned. That is a narrower promise than "requires no one's permission," and it is the one this document can actually support.
+
+**Does not inherently suppress automation signals — but still needs ordinary workload authority, and must not be enforcement-conditioned:**
 
 - **Headful with a real display and hardware GPU.** Buys rendering, compositor, GPU and font fidelity, and fixes genuine layout differences. Biggest single fidelity gain — and it buys **zero** reduction in automation signalling. `--remote-debugging-port=0` sets `AutomationControlled` independently (§2.1), so dropping `--headless=new` removes one of two sufficient causes and `navigator.webdriver` stays `true`. That is exactly why this belongs in pile 1: it improves fidelity without touching a truthful signal. Anyone expecting it to quiet `webdriver` has misread the flag table.
 - **A real font corpus matched to the OS actually running.** Kernel's own history is the case study: commit `cba3f77` added fonts specifically because a three-font container was a signal. Match the real platform, not a platform you would prefer to present, and do not install everything — an implausibly complete corpus is its own outlier.
 - **Persistent profiles with single ownership.** Already supported via `--profile` (`flags.rs:257`); `--user-data-dir` is the Chrome switch the code emits, not a CLI flag. Needs leasing, encryption, and a TTL — `storageState` and cookies are bearer credentials.
+- **Note a live incompatibility before promising composability.** `ensure_allowed_domains_supported_for_launch` (`actions.rs:2596-2641`) *rejects* `--allowed-domains` combined with `--restore`, and with saved storage state, because restored state can replay origins before the allowlist is in force. So "persistent login" and "per-origin confinement" are not currently composable, and any plan offering both needs a way to activate saved state without pre-control origin replay.
 - **Stable egress per session, and fix the WebRTC trigger.** Proxy support exists; egress *stability* and IPv6/DNS policy do not. A session whose ASN changes mid-flight is incoherent no matter how good the browser is. WebRTC containment *does* exist and is well built — `chrome.rs:510-517` forces `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` and `retain`s away any user override so it cannot be weakened, and `network.rs:407-425` blocks `RTCPeerConnection` in-page. But both gate on `restrict_webrtc`, which `actions.rs:2938` and `:3707` define as `!allowed_domains.is_empty()`. **The leak protection is wired to `--allowed-domains`, not to `--proxy`**, so a proxied session without domain filtering — the natural way to use a proxy — leaks the real IP over UDP. Gate it on proxy configuration instead, or on both.
 - **Fix §3.1 and §3.2.** Correctness wins that also remove artifacts.
 - **An identity manifest (§3.3)** that rejects contradictions before launch.
@@ -427,21 +472,24 @@ These are small, independently justified, and do not depend on a measurement bas
 
 1. **Flip `BROWSERLESS_STEALTH` to default `false`** (§2.4, §5) — one `unwrap_or` and a docs line. Today every Browserless session asks a third party to suppress automation signals unless the user knew to opt out. Whatever the answer, it should be an explicit choice rather than an inherited default; if the product decision is to keep it on, log it per session so it appears in the record.
 2. **Gate `--force-webrtc-ip-handling-policy` on `proxy.is_some() || !allowed_domains.is_empty()`** (§5). Today a proxied session without `--allowed-domains` leaks the real IP over UDP. This half is a genuine one-liner with no page surface. Note the *other* half is not: `install_domain_filter_script` early-returns on an empty allowlist (`network.rs:166-168`), so extending the in-page `RTCPeerConnection` block to proxy-only sessions means new injection plumbing and breaking WebRTC for people who wanted a proxy and nothing else. That is a product decision, not a fix — see item 10.
-3. **Make the four terminal synthetic writes call the native prototype setter** (§3.1) — silent correctness bug in React apps.
+3. **Reproduce, then fix, the four terminal synthetic writes** (§3.1). §3.1 says the React tracker reasoning is unobserved and must be reproduced before acting; shipping the fix immediately would contradict that. Write the repro against pinned framework versions, define each verb's expected event contract — the generic `value`-setter prescription does not specify `<select>` or multi-select semantics — then fix. The repro is small; skipping it is what is not cheap.
 4. **Reject a `--user-agent` override that carries no metadata** (§3.4). Today the flag leaves clients worse off than not using it; refusing it is a strict improvement and needs nothing else. *Populating* `userAgentMetadata` is the better fix but depends on the manifest, so it lands with item 8.
 5. **Rename `_agentBrowserInstallDomainFilter`** so worker-bootstrap source stops carrying the tool's name (§3.2), and randomize the `__AB_` property names per launch. Both are cheap; the isolated-world version is not, and is not required.
-6. **Change the `--args` help-text example** (§5). One line, and it stops the tool recommending the anti-pattern to everyone who runs `--help`.
+6. **Change the `--args` help-text example** (§5) to `--window-size=1920,1080`. One line, and it stops the tool recommending the anti-pattern to everyone who runs `--help`. Not `--no-sandbox` — that disables a browser security boundary and is no more neutral than the flag it replaces.
 
-### Gated: needs the harness or a decision first
+### Gated: build in dependency order, not severity order
 
-7. **Build the origin-side measurement harness** (§6), covering all six cohorts including `read`. Everything below changes observable behavior, and without a baseline you cannot tell a fix from a regression.
-8. **Introduce the identity manifest** (§3.3) — prerequisite for the cascade, for item 4's better half, and for any cohort claim. Needs a field list and an owner; it is a subsystem, not a task.
-9. **Move the five HTTP-shaped domain-filter wrappers to CDP `Fetch`/`Network` interception** (§3.2). The `RTCPeerConnection` hard block stays in the page — no CDP domain replaces it.
-10. **Decide the throwaway-profile default** (§2.1) and whether proxied sessions lose WebRTC (item 2). Both are product decisions with real tradeoffs — ephemerality is a privacy feature, and persistent profiles need leasing, encryption, and a TTL, which is three subsystems in a clause.
-11. **Build requirement-driven tier selection** (§4.1) with the stop-state (§4.2), the identity/horsepower split applied at every boundary (§4.3), and a diagnostic stop path (§4.4) from the first commit. Measure the tier-0 hit rate before committing to four tiers.
-12. **Add headful/hardware-GPU and font-cohort tiers** (§5) — the largest fidelity gain, and the one most in need of a baseline to prove it worked.
-13. **Extend `policy.rs` to per-origin authorization** (§4.6, §5), gating the suppression flags. The handbook's authorization record is a ready-made schema; cite it rather than inventing one.
-14. **Track Web Bot Auth** (§5); prototype signing on `read` first, since it has no browser stack to reconcile.
+The remaining items have hard prerequisites, and an earlier draft listed them in an order that could not be executed — selection before the capability model it matches against, and before the authorization it needs at every identity-changing boundary. Ordered by what unblocks what:
+
+7. **Observation schema and origin-side harness** (§6). Every cohort gets a baseline: native-headless, native-headful, Lightpanda, WebDriver, URL-form `read`, and *each remote provider separately* — providers are not one cohort, and their output can change without notice. Everything below alters observable behavior, so without this you cannot distinguish a fix from a regression.
+8. **Resolved identity manifest and target initializer** (§3.3). The record of what actually launched. Prerequisite for item 4's better half, for any cohort claim, and for the capability model. Needs a field list and an owner; it is a subsystem, not a task.
+9. **Fail-closed authorization and session confinement** (§4.6, §5). A required record — not `ActionPolicy`, which fails open and is the wrong granularity. Merge CLI, env, config, plugin, and provider mutations into one effective launch plan, validate it before launch, and bind the session to its authorized origin set across redirects, popups, frames, and workers. This gates the suppression flags and every identity-changing transition, so it must precede selection. The handbook's authorization record is a ready-made schema; cite it rather than inventing one.
+10. **A real capability model, requested / provider-declared / runtime-verified** (§4.1). Replace the ordinal ladder with orthogonal axes — engine and API subset, display class, renderer and adapter, font digest, extensions, profile semantics and lease, egress, provider effects. This matters because the ladder's rungs are not what they claim: Lightpanda has its own JS runtime rather than none, headful does not guarantee a hardware GPU or a real display (Linux may start Xvfb, and `LaunchOptions` carries no GPU or font contract), tier 1 is not inherently SwiftShader, and built-in providers return `metadata: None` so tier 3 cannot attest anything at all. **Unknown must not satisfy a requirement.**
+11. **Requirement-driven selection** (§4.1) with frozen, provenanced requirements, the absorbing STOP state (§4.4), and the identity/horsepower split at every boundary (§4.3). Only now, on top of 8-10. Measure the tier-0 hit rate before committing to more than two tiers.
+12. **Prove which domain-filter wrappers are redundant** (§3.2) via the parity matrix, then remove only those. The `RTCPeerConnection` block and the worker-scoped wrappers stay.
+13. **Decide the product questions** (§2.1, item 2): the throwaway-profile default, and whether proxied sessions lose WebRTC. Also resolve the `--allowed-domains` / `--restore` incompatibility if persistent login and per-origin confinement are meant to compose.
+14. **Add headful/hardware-GPU and font-cohort capabilities** (§5) — the largest fidelity gain, and the one most in need of item 7 to prove it worked.
+15. **Track Web Bot Auth** (§5); prototype signing on `read` first, since it has no browser stack to reconcile.
 
 The property worth protecting through all of it is that agent-browser's *local* path is honest by default — `--remote-debugging-port=0` arrived at the cooperative behavior by accident, and every finding above is fixable without giving that up.
 
