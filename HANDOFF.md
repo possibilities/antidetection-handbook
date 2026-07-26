@@ -52,15 +52,23 @@ Measured, with controls:
 - §3.1's React correctness bug **does not exist** as a live defect. Two of the
   four sites are unreachable from any shipped client; the reachable one updates
   React correctly.
+- Copied headers cannot reproduce browser transport. curl carrying Chrome's
+  exact header set offered 49 cipher suites to Chrome's 16, 6 extensions to 17,
+  and no GREASE. The handbook's myth-table entry is now measured.
+- Chrome 150 offers X25519MLKEM768 (`0x11ec`) as a real 1216-byte key share.
+  A strong browser-versus-generic-client discriminator today, and the single
+  most likely component to move as post-quantum deployment matures.
 
 ## Build order
 
 Dependency order, not severity order. §4.5 has the schema; §7 has the full list.
 
-1. **Observation harness** — extend `lab/` to a TLS-terminating origin so
-   JA3/JA4, HTTP/2 and header ordering come into scope. Everything downstream
-   changes observable behaviour, so without a baseline you cannot tell a fix
-   from a regression.
+1. **Observation harness** — `lab/tls-origin.mjs` now terminates TLS and parses
+   the ClientHello, so cipher suites, extensions, groups, key shares, ALPN and
+   GREASE are already in scope. What remains is decoding HTTP/2 framing to
+   capture SETTINGS and pseudo-header order. Everything downstream changes
+   observable behaviour, so without a baseline you cannot tell a fix from a
+   regression.
 2. **Resolved identity manifest** — the record of what actually launched.
 3. **Fail-closed authorization** — a required artifact, not `ActionPolicy`,
    which fails open when its config is malformed and is the wrong granularity
@@ -99,7 +107,8 @@ emits an action before ranking a fix.
 
 ## Deliberately not done
 
-TLS/JA3/JA4 and HTTP/2 fingerprinting — needs a TLS-terminating origin. React 19
+HTTP/2 framing — SETTINGS, window sizes and pseudo-header order (the TLS layer
+is done; `lab/tls-origin.mjs` only decodes HTTP/1.1 request lines today). React 19
 (dropped UMD; needs a bundled fixture). Real proxy and paid-provider arms.
 Branded DOM mutations under a `MutationObserver`. `--profile <name>`
 copy-and-discard. The four repository security concerns in the companion's

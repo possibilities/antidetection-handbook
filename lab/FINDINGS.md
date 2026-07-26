@@ -216,6 +216,53 @@ page APIs, `fetch`, `WebSocket`, `EventSource`, `sendBeacon` and
 `RTCPeerConnection` report non-native, but **`XMLHttpRequest` reports
 `[native code]`**. Four wrappers plus one hard block, not five plus one.
 
+### 8. Copied headers cannot reproduce browser transport (E07)
+
+The handbook's network chapter rests on this and never measured it. Both
+clients fetched the same TLS-terminating origin; curl was given Chrome's exact
+header set. The origin parsed each ClientHello before the handshake completed.
+
+| | Chrome 150 | curl (identical headers) |
+|---|---|---|
+| cipher suites | 16 | 49 |
+| extensions | 17 | 6 |
+| GREASE (RFC 8701) | **present** | absent |
+| supported_groups | `0x4a4a` (GREASE), `0x11ec`, `0x001d`, `0x0017`, `0x0018` | `0x001d`, `0x0017`, `0x0018`, `0x0019` |
+| JA3 hash | `9937fa3d…` | `4f265572…` |
+
+Not a subtle difference — curl offers *three times* the ciphers and a third of
+the extensions, in a different order, with no GREASE. Identical headers, and
+nothing below the header layer matches. The myth-table entry is now measured
+rather than asserted.
+
+### 9. Post-quantum key agreement, verified in a real handshake (E07)
+
+The handbook's note that Chrome moved to X25519MLKEM768 came from a vendor blog
+post. Confirmed directly in Chrome 150's ClientHello:
+
+```
+supported_groups : 0x4a4a (GREASE), 0x11ec, 0x001d, 0x0017, 0x0018
+key_share        : 0x4a4a (1 byte), 0x11ec (1216 bytes), 0x001d (32 bytes)
+```
+
+`0x11ec` is X25519MLKEM768, and it is offered as a **real key share**, not just
+advertised. The 1216-byte share against X25519's 32 is the concrete reason
+Chrome does not offer two post-quantum groups simultaneously — the handbook says
+"too big to offer two predictions at once" and this is what that costs on the
+wire.
+
+Implication for anyone building a cohort baseline: this group is a strong
+browser-vs-generic-client discriminator today, and it is also the single most
+likely thing to change as PQ deployment matures. Record the browser build
+alongside every captured fingerprint or the capture cannot be interpreted later.
+
+**Harness limitation in this experiment:** the origin only decodes HTTP/1.1
+request lines. Chrome negotiated `h2`, so its request was recorded without a
+parsed header list and the header-comparison assertion mispaired the two
+clients. The header premise is true by construction (curl was passed the headers
+with `-H`) but is not independently asserted here. Decoding h2 framing, and
+capturing SETTINGS and pseudo-header order, is the obvious next increment.
+
 ---
 
 ## A confound that invalidated part of an earlier round
