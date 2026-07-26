@@ -28,7 +28,7 @@ So the available work splits into three piles.
 2. **Coherence bugs worth fixing on their own merits.** Mixed input provenance (§3.1), branded identifiers in page scope (§3.2), no identity manifest (§3.3), and a UA override that changes the string but not the Client Hints (§3.4). All four are defects regardless of detection; §3.4 currently leaves a client *worse off* than not using the flag.
 3. **Suppressing truthful automation signals.** Requires the site owner's express permission per the handbook's own rules. Because this is already reachable, the work here is adding a gate and retiring the help-text recommendation — not building a feature (§5).
 
-The cascade the project wants is a good idea, but §4 argues it should be inverted: select tiers from **declared task requirements** up front rather than promoting in response to **observed failures**. The reason is that "the tier couldn't do the work" and "the origin refused us" are indistinguishable from the outside — you see a failure and infer a cause — so a failure-driven cascade sorts on something nobody can actually observe. Requirements are observable; causes of failure are not.
+The cascade the project wants is a good idea, but §4 argues it should be inverted: select tiers from **declared task requirements** up front rather than promoting in response to **observed failures**. The reason is that "the tier couldn't do the work" and "the origin refused us" are indistinguishable from the outside — you see a failure and infer a cause — so a failure-driven cascade sorts on something nobody can actually observe. Requirements can be established before contact; causes of failure cannot be established at all.
 
 ---
 
@@ -183,7 +183,11 @@ This matters more than the profiler globals for a simple reason: it is attached 
 
 **Fix, priced honestly.** A closure will not work for the `__AB_` state: `RENDERS_INIT` and `VITALS_INIT` are injected via `addScriptToEvaluateOnNewDocument` and their results are read by a *separate, later* `Runtime.evaluate` (`scripts.rs:209` writes, `:392` reads; `:675` writes, `:752` reads). Two independent evaluations cannot share a closure — the global **is** the channel between them, which is why it exists. An isolated world would work but is not cheap either: `grep` across `cli/src` returns zero hits for `createIsolatedWorld`, `worldName`, and `executionContextId`, so it means new CDP plumbing threaded through every evaluate call site.
 
-The cheap paths are `Runtime.addBinding`, which gives page-to-client communication without a page global, or simply a per-launch randomized property name, which keeps the channel and destroys its value as a stable signature. Take the second unless the plumbing is wanted for other reasons. Separately, rename `_agentBrowserInstallDomainFilter` to something unbranded so the worker-bootstrap source stops carrying the tool's name — that one genuinely is a one-line change.
+The cheap paths are `Runtime.addBinding`, which gives page-to-client communication without a page global at all, or a per-launch randomized property name, which keeps the channel and destroys its value as a stable signature.
+
+**Split these by purpose, though, because they are not the same kind of change.** Removing page-readable and page-tamperable state, and preserving a page's own colliding attribute values, are straightforward correctness and hygiene: they make the tool interfere less with the document, and they would be worth doing if no detector existed. *Randomizing or debranding an identifier* is different — its entire function is to reduce observability, and a high-entropy per-session property can even add identifying surface. That belongs behind §5's purpose-and-trigger axis rather than in the permission-neutral pile. `Runtime.addBinding` is the better answer precisely because it removes the state instead of disguising it.
+
+Renaming `_agentBrowserInstallDomainFilter` sits on the line: dropping a vendor name from worker-bootstrap source is mostly hygiene, but do it because tool internals should not be in page scope, not because it is harder to grep.
 
 For the domain filter, the honest task is **"prove which wrappers are redundant,"** not "move them to CDP." An earlier draft said the five HTTP-shaped wrappers could move to `Fetch`/`Network` interception and nothing would be patched. That is wrong, and the code says so itself: `install_domain_filter` already installs **both** layers, and its doc comment (`network.rs:456-467`) states the JS layer exists precisely "for APIs outside Fetch interception, including workers, WebSocket, EventSource, sendBeacon, and RTCPeerConnection." Four of the five are documented as beyond Fetch's reach, and the script also wraps `Worker`, `SharedWorker`, and `importScripts`, which §3.2's inventory did not count.
 
@@ -220,7 +224,19 @@ This is the handbook's named anti-pattern, verbatim:
 
 Anyone who reaches for `--user-agent` today gets a client that contradicts itself on the first request — a *worse* position than not setting it at all, since the mismatch between UA and UA-CH is a stronger signal than an honest UA. It is also a correctness bug: server-side UA sniffing and client-side `userAgentData` checks in the same application will disagree.
 
-**Fix:** populate `userAgentMetadata` from the identity manifest whenever `userAgent` is set, and reject a UA override that has no accompanying metadata rather than silently applying half of it.
+**`--user-agent` is not the worst instance — the shipped presets are.** `set device` routes through the same string-only setter (`actions.rs:7350-7369`), and its preset table installs full **iOS Safari** UA strings on a **Chromium** engine:
+
+```
+"iphone 16" => (393, 852, 3.0, true,
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 …
+   Version/18.0 Mobile/15E148 Safari/604.1")
+```
+
+So `set device "iPhone 16"` produces a client whose UA claims Safari on iOS while `navigator.userAgentData` reports Chromium brands, the JS engine is V8, the TLS stack is BoringSSL, and the codec and font surfaces are whatever the host actually has. That is the handbook's mobile-UA-with-desktop-everything contradiction, shipped as a documented feature rather than reached for by a user. It is also a *correctness* problem for the responsive-testing use case these presets exist to serve: a site doing UA-CH-based adaptation will branch the wrong way.
+
+**A second, quieter leak: new tabs navigate before they are configured.** `tab_new` issues `Target.createTarget` with the caller's URL and only *then* attaches and enables domains (`browser.rs:1117-1164`). Per-session overrides and init scripts are applied after attachment, so the tab's **first request** — the navigation itself — escapes all of them. This is the handbook's *Configure before first navigation* principle, violated by ordering.
+
+**Fix:** treat this as one task, not three. Inventory every identity override in the codebase (`--user-agent`, `set device`, viewport, locale, timezone) and route them through one manifest-derived path that always sets `userAgentMetadata` alongside `userAgent`, rejecting any override that cannot supply coherent metadata. Then create targets at `about:blank`, attach, apply overrides and init scripts, and navigate only afterwards. Fixing `--user-agent` alone leaves the built-in presets contradicting themselves and every new tab leaking its first request.
 
 ---
 
@@ -230,9 +246,9 @@ The proposal is a system that starts with the most agent-browser-native approach
 
 **"Capability failure" and "enforcement" are not properties of the observation.** They are facts about the origin's internal state, and you never see that state. You see a failure and infer a cause. A blank page, a missing selector, and a navigation timeout are each produced by both an ordinary SPA and a bot control, and nothing in the response distinguishes them reliably. So a cascade that classifies *observed failures* is asking engineers to sort on something they cannot see, and §4.3's "when ambiguous, do not promote" rule then eats most of the cases — which, if failure-driven promotion were the only mechanism, would collapse the whole design into "never promote."
 
-The way out is to notice which triggers *are* unambiguous. "This job needs WebGL" is knowable before you run anything: it is a property of the task, not an inference from a failure. So is "this job needs a persistent login," "this needs a regional egress," "this needs an extension." Requirements are observable; causes of failure are not.
+The way out is to notice which triggers *are* unambiguous. "This job needs WebGL" is knowable before you run anything: it is a property of the task, not an inference from a failure. So is "this job needs a persistent login," "this needs a regional egress," "this needs an extension." Requirements can be established before contact; causes of failure cannot be established at all.
 
-Requirements still divide, though, and the split runs through the requirement list rather than through the tier ladder. **A requirement for horsepower** — GPU, compositor, extensions, real font metrics — is an ordinary capability need that tier selection can satisfy on its own. **A requirement for identity** — a regional egress, a specific ASN or geography, a provider-managed profile — is an authorization question wearing capability clothes, and it takes the §5 gate no matter which tier happens to supply it. §4.3 catches this at tier 3, where the two arrive together and the disguise is thickest, but the rule is not about tier 3: it belongs at every boundary, including a tier-2 job that declares it needs to egress from Frankfurt.
+Requirements still divide, though, and the split runs through the requirement list rather than through the tier ladder. **A requirement for horsepower** — GPU, compositor, real font metrics — is an ordinary capability need that tier selection can satisfy on its own. Extensions are not a single class: classify an extension by its *digest and effects*, since one may be accessibility functionality, one enterprise policy, and one an identity or signal mutation that belongs in the second category. **A requirement for identity** — a regional egress, a specific ASN or geography, a provider-managed profile — is an authorization question wearing capability clothes, and it takes the §5 gate no matter which tier happens to supply it. §4.3 catches this at tier 3, where the two arrive together and the disguise is thickest, but the rule is not about tier 3: it belongs at every boundary, including a tier-2 job that declares it needs to egress from Frankfurt.
 
 **So select tiers from declared task requirements, and treat failures as diagnostics rather than as promotion triggers.** This inverts the usual design and is the single most important structural recommendation in this document. It also happens to be faster: requirement-driven selection reaches the right tier on the first attempt instead of walking up the ladder.
 
@@ -340,7 +356,7 @@ Note what the second clause does *not* say. "You are entitled to the access, so 
 
 The asymmetry with the challenge classifier above is deliberate, but the reason is not the one it is tempting to give. It would be neat to say "a challenge classifier only ever outputs `STOP`, so its errors fail safe" — and that is wrong. Only its *positive* output is `STOP`. Its negative output is silence, and silence falls through to whatever the default is. If the default is "content missing, so promote," then a missed challenge promotes straight into it: precisely the failure mode being refused for the 403 case one paragraph earlier.
 
-The real asymmetry is about **defaults, not output vocabulary**. Both paths must default to stopping. 403 defaults `STOP` with narrow authorization-based carve-outs. Blank DOM must *also* default to `STOP`, with promotion requiring positive structural evidence of a JS-dependent page — a root-mount script tag, a recognized framework bundle, an engine-capability error from tier 0 — never the mere absence of content. Build classifiers whose *default* is halting, and the principle is actually implemented rather than asserted.
+The real asymmetry is about **defaults, not output vocabulary**. Both paths must default to stopping. 403 defaults `STOP` with narrow authorization-based carve-outs. Blank DOM must *also* default to `STOP`, with promotion requiring typed engine-originated capability telemetry — never page content, and never the mere absence of content. A root-mount script tag and a recognized framework bundle are *not* evidence: a challenge shell has both. Build classifiers whose *default* is halting, and the principle is actually implemented rather than asserted.
 
 **Promotion into someone else's stealth profile.** This is the hole the three cases above do not close. §4.1's tier 3 promotes to a remote provider on "needs an environment the local host cannot provide," which quietly admits "the local host cannot provide a clean residential egress" as a *capability* trigger. And per §2.4, Kernel's headless profile ships a default stealth flag list. So the top of the cascade is *promote into a stealth configuration you did not write and cannot see* — reachable without ever authoring an enforcement rule, and phrased in capability language throughout.
 
@@ -364,13 +380,97 @@ This is also where the handbook's human-in-the-loop boundary sits, and it is nar
 
 Designed this way, the stop-state stops being the component everyone routes around.
 
-### 4.5 The "known detectors" idea
+### 4.5 A worked schema, because the hard parts are the definitions
+
+Everything above is a design principle, and a principle is not buildable. Left as prose, an engineer still has to invent the security semantics of "predates contact," "same attempt lineage," "typed engine telemetry," "effective method," and "verified capability" — and two implementations could both claim compliance while disagreeing on every one. Four records, the three named in §4.1 plus the attempt record that makes their relationship enforceable:
+
+```yaml
+task_requirements:
+  schema: 1
+  job_id: …
+  lineage_id: …                  # survives retries AND new sessions
+  issuer: …
+  issued_at: …
+  target_origins: […]
+  source_refs: […]               # immutable, independently checkable
+  needs:
+    - capability: hardware_webgl
+      constraints: {…}
+      established_at: …
+      provenance_ref: …
+  frozen_digest: sha256:…
+
+method_authorization:
+  authorization_id: …
+  approving_party: …
+  evidence_ref: …
+  purpose: …
+  origins: […]                   # define redirect/frame/subresource semantics
+  methods:
+    providers: […]
+    network_modes: […]
+    launch_flags: […]
+    extension_digests: […]       # digest and effects, not the noun "extension"
+    init_script_digests: […]
+    signal_suppression: […]
+  accounts_actions_limits: {…}
+  valid_from: …
+  expires_at: …
+  challenge_policy: stop
+
+resolved_environment:
+  manifest_id: …
+  job_id: …
+  requirements_digest: …
+  authorization_digest: …
+  adapter_and_version: …
+  executable_or_image_digest: …
+  effective_launch_plan: …       # AFTER CLI/env/config/plugin/provider merge
+  requested_capabilities: …
+  provider_declared: …
+  runtime_verified: …
+  profile: {class, lineage, lease}
+  network: {requested, observed}
+  display_renderer_fonts: {requested, observed}
+  effective_mutation_digests: […]
+
+job_attempt:
+  attempt_id: …
+  lineage_id: …
+  first_target_contact_at: …
+  manifest_id: …
+  status: running|stopped|complete
+  transition_reason:
+    type: precontact_requirement|engine_capability
+    capability: …
+    evidence_ref: …
+  stop:
+    disposition: explicit_enforcement|ambiguous_default_stop|policy_denial|retry_budget_exhausted
+    rule_id: …
+    observed_facts_ref: …
+    stopped_at: …
+```
+
+**The invariants matter more than the YAML.** These are the parts an implementer would otherwise have to guess:
+
+1. `issued_at` and every `established_at` must precede `first_target_contact_at`, and `lineage_id` **cannot be reset by starting a new session**. This is what closes the laundering attack in §4.1.
+2. The **fully merged** effective launch plan must be known before the authorization comparison. Plugin and provider mutations cannot be applied afterwards, or the thing authorized is not the thing launched.
+3. Unknown provider or runtime capability **never** satisfies a requirement. Built-in providers currently return `metadata: None`, so today they satisfy nothing.
+4. "Engine telemetry" means an adapter-owned typed channel or static capability table — **not** a `Runtime.evaluate` exception string, which the page can author. The current code flattens those exceptions, so this needs new plumbing before §4.2's promotion rule can be honoured at all.
+5. Selection picks the **least** environment satisfying both requirements and authorization. Unsatisfied, unknown, and tied cases fail closed.
+6. Once STOP latches, only a new job linked to newly validated authorization may contact the target. A new session name is not a reset.
+
+The transition, end to end: **merge the launch plan → freeze and check requirements → select against verified capability descriptors → intersect exact methods and origins with the authorization → launch and bind → permit reselection only on typed adapter telemetry → otherwise latch STOP.**
+
+Invariant 4 is the one most likely to be skipped, and skipping it silently reintroduces page-authored promotion evidence through the back door.
+
+### 4.6 The "known detectors" idea
 
 Pre-classifying sites by which bot-control vendor protects them, in order to pre-select a stealthier tier, is enforcement evasion with the enforcement step cached. It moves the decision earlier in time; it does not change what the decision is. The same table applies.
 
-There is a legitimate version of site-specific configuration, and it is worth building instead: a per-origin policy table recording **authorization** — which origins the operator owns or has written permission to automate, which credentials and rate limits apply, which are API-first, and which are simply out of scope. That table makes the system safer and is exactly what `policy.rs` is already shaped for.
+There is a legitimate version of site-specific configuration, and it is worth building instead: a per-origin policy table recording **authorization** — which origins the operator owns or has written permission to automate, which credentials and rate limits apply, which are API-first, and which are simply out of scope. That table makes the system safer, and it belongs in the separate authorization artifact of §4.7 — not in `policy.rs`, which fails open and is the wrong granularity for it.
 
-### 4.6 Where this plugs in
+### 4.7 Where this plugs in
 
 `cli/src/native/policy.rs` has an `ActionPolicy` returning `Allow`, `Deny`, or `RequiresConfirmation`, loaded from JSON with an `AGENT_BROWSER_CONFIRM_ACTIONS` env override. It is the closest existing thing — but calling it "already the right primitive," as an earlier draft did, overstates it in three ways that matter:
 
@@ -430,8 +530,8 @@ That also means the heading below is mis-titled if read as a permission claim. T
 
 The first three are documented flags today (§2.1), with the suppression flag used as the help-text example and the `navigator.webdriver` shim shipped as a plugin test vector. So this is not a "should we build it" question. Three things are worth doing:
 
-1. **Stop advertising it.** Change the `--args` example in `output.rs:3521` to something neutral like `--no-sandbox` or `--window-size=1920,1080`. A tool's help text is a recommendation, and right now it recommends the anti-pattern to every user who runs `--help`.
-2. **Gate it.** These flags should require a per-origin authorization record naming the approving party — not a global `stealth: true`. The handbook's *Authorization assertion* example is the shape, and `policy.rs` is the natural home.
+1. **Stop advertising it.** Change the `--args` example in `output.rs:3521` to something genuinely neutral such as `--window-size=1920,1080`. Not `--no-sandbox`, which disables a browser security boundary and is no better a recommendation than the flag it would replace. A tool's help text is a recommendation, and right now it recommends the anti-pattern to every user who runs `--help`.
+2. **Gate it.** These flags should require a per-origin authorization record naming the approving party — not a global `stealth: true`. The handbook's *Authorization assertion* example is the shape; §4.7 explains why `policy.rs` cannot carry it.
 3. **Log it.** Any session that suppresses a truthful signal should say so in its output, so it appears in the record rather than only in someone's shell history.
 
 **Not available at any tier:** solving or outsourcing challenges, rotating after denial, or presenting a synthetic persona to a third party that has not agreed to it.
@@ -454,9 +554,9 @@ Minimum useful harness:
 
 1. **A first-party origin** that records what each backend actually emits: TLS ClientHello and JA4, ALPN, HTTP version, H2 SETTINGS and pseudo-header order, full header order, source IP and ASN. Never a third-party checker, and never with production credentials.
 2. **A cross-context probe** asserting that UA, languages, platform, `hardwareConcurrency`, and timezone agree across page, iframe, dedicated worker, and service worker. This catches emulation that only applied to the main realm — the most common silent failure.
-3. **A per-backend cohort baseline.** Native-headless, native-headful, Lightpanda, WebDriver, `read`, and each remote provider are *different cohorts* — six kinds of client, not one. `read` is the easiest to forget and the most distinctive, since its rustls handshake looks nothing like Chrome's. A remote provider's output is a measurement of that provider and can change without notice, so re-baseline on a schedule rather than on suspicion.
+3. **A per-backend cohort baseline.** Native-headless, native-headful, Lightpanda, WebDriver, URL-form `read`, and **each remote provider separately** are all different cohorts. `read` is the easiest to forget and the most distinctive, since its rustls handshake looks nothing like Chrome's. A remote provider's output is a measurement of that provider and can change without notice, so re-baseline on a schedule rather than on suspicion.
 4. **Positive and negative controls.** Include a plain WebDriver session with `navigator.webdriver === true` to prove the probe can see an intentional signal, and a stock browser to measure false positives.
-5. **An `isTrusted` assertion** across every interaction verb, which would have caught §3.1 automatically.
+5. **A per-verb event-provenance contract**, asserted in tests. Not a blanket `isTrusted === true`: `dispatch_event` is *contractually* untrusted (§3.1) and the select paths have their own semantics. Write down what each verb should emit — trusted or not, which events, in what order — and assert that. A blanket assertion would be wrong for at least two verbs and would still have caught §3.1.
 
 Run these per Chrome release. Every version-specific claim in this document is a hypothesis with an expiry date.
 
@@ -483,13 +583,24 @@ The remaining items have hard prerequisites, and an earlier draft listed them in
 
 7. **Observation schema and origin-side harness** (§6). Every cohort gets a baseline: native-headless, native-headful, Lightpanda, WebDriver, URL-form `read`, and *each remote provider separately* — providers are not one cohort, and their output can change without notice. Everything below alters observable behavior, so without this you cannot distinguish a fix from a regression.
 8. **Resolved identity manifest and target initializer** (§3.3). The record of what actually launched. Prerequisite for item 4's better half, for any cohort claim, and for the capability model. Needs a field list and an owner; it is a subsystem, not a task.
-9. **Fail-closed authorization and session confinement** (§4.6, §5). A required record — not `ActionPolicy`, which fails open and is the wrong granularity. Merge CLI, env, config, plugin, and provider mutations into one effective launch plan, validate it before launch, and bind the session to its authorized origin set across redirects, popups, frames, and workers. This gates the suppression flags and every identity-changing transition, so it must precede selection. The handbook's authorization record is a ready-made schema; cite it rather than inventing one.
+9. **Fail-closed authorization and session confinement** (§4.5, §4.7, §5). A required record — not `ActionPolicy`, which fails open and is the wrong granularity. Merge CLI, env, config, plugin, and provider mutations into one effective launch plan, validate it before launch, and bind the session to its authorized origin set across redirects, popups, frames, and workers. This gates the suppression flags and every identity-changing transition, so it must precede selection. The handbook's authorization record is a ready-made schema; cite it rather than inventing one.
 10. **A real capability model, requested / provider-declared / runtime-verified** (§4.1). Replace the ordinal ladder with orthogonal axes — engine and API subset, display class, renderer and adapter, font digest, extensions, profile semantics and lease, egress, provider effects. This matters because the ladder's rungs are not what they claim: Lightpanda has its own JS runtime rather than none, headful does not guarantee a hardware GPU or a real display (Linux may start Xvfb, and `LaunchOptions` carries no GPU or font contract), tier 1 is not inherently SwiftShader, and built-in providers return `metadata: None` so tier 3 cannot attest anything at all. **Unknown must not satisfy a requirement.**
 11. **Requirement-driven selection** (§4.1) with frozen, provenanced requirements, the absorbing STOP state (§4.4), and the identity/horsepower split at every boundary (§4.3). Only now, on top of 8-10. Measure the tier-0 hit rate before committing to more than two tiers.
 12. **Prove which domain-filter wrappers are redundant** (§3.2) via the parity matrix, then remove only those. The `RTCPeerConnection` block and the worker-scoped wrappers stay.
 13. **Decide the product questions** (§2.1, item 2): the throwaway-profile default, and whether proxied sessions lose WebRTC. Also resolve the `--allowed-domains` / `--restore` incompatibility if persistent login and per-origin confinement are meant to compose.
 14. **Add headful/hardware-GPU and font-cohort capabilities** (§5) — the largest fidelity gain, and the one most in need of item 7 to prove it worked.
 15. **Track Web Bot Auth** (§5); prototype signing on `read` first, since it has no browser stack to reconcile.
+
+### Out of scope here, but worth someone's attention
+
+These surfaced while reading for identity and coherence. They are not detection findings and do not belong in this document's thesis, but they are larger risks than most of what is above and should not be lost:
+
+- **`CI=1` silently disables the Chrome sandbox.** `should_disable_sandbox` (`chrome.rs:1321-1359`) adds `--no-sandbox` when the `CI` environment variable is merely *present*, among other heuristics. An env var is not evidence that an equivalent isolation boundary exists.
+- **Plugins are unrestricted child processes.** `invoke_plugin_process` (`plugins.rs:201-217`) spawns `plugin.command` with the daemon's environment, and plugins may be installed from npm or GitHub. Combined with the `LaunchMutation` surface from §2.1, that is a direct code-execution and secret-exposure boundary — a bigger deal than any page-visible fingerprint here.
+- **Appium launches with `--relaxed-security`.** `launch_appium` (`appium.rs:166-188`) runs unpinned `npx appium --relaxed-security` with no explicit bind address, and sessions use `noReset: true`. That deserves its own WebDriver and mobile threat model.
+- **Named-profile temp copies are best-effort.** Cleanup runs in `Drop`, so a `SIGKILL` can leave a credential-bearing copy of a real Chrome profile on disk.
+
+The first two would be my priorities if someone writes the security companion.
 
 The property worth protecting through all of it is that agent-browser's *local* path is honest by default — `--remote-debugging-port=0` arrived at the cooperative behavior by accident, and every finding above is fixable without giving that up.
 
