@@ -18,6 +18,8 @@ This is deliberately narrower than defeating bot controls. It does **not** autho
 
 The document is intentionally self-contained. Linked sources establish provenance, expose version-sensitive details, and provide deeper verification; reading them should not be required to understand the implementation model here.
 
+> **This file is one of three.** [`START-HERE.md`](./START-HERE.md) is the reading guide and explains how much to trust each. [`AGENT-BROWSER.md`](./AGENT-BROWSER.md) applies this material to a specific project. [`lab/`](./lab) contains executable checks — several claims in this handbook were corrected after being measured there, so where a document and the lab disagree, the lab wins.
+
 ### Scope and non-goals
 
 Knowing this handbook's edges prevents misapplying it:

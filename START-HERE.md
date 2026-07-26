@@ -1,13 +1,13 @@
-# Handoff
+# Start here
 
-For the team that will build this. Three artifacts, and the most important thing
-to understand is that they are **not equally trustworthy**.
+A reading guide for this repo. Three artifacts, and the most important thing to
+understand is that they are **not equally trustworthy**.
 
 | artifact | what it is |
 |---|---|
-| [`README.md`](./README.md) | The general handbook. Standards, surfaces, principles. Stable since `44533e3`. |
-| [`AGENT-BROWSER.md`](./AGENT-BROWSER.md) | Applied analysis of `possibilities--agent-browser`. Revised seven times. |
-| [`lab/`](./lab) | Executable checks. Where the two disagree, the lab wins. |
+| [`README.md`](./README.md) | The general handbook. Standards, surfaces, principles. Broadest scope, least project-specific. |
+| [`AGENT-BROWSER.md`](./AGENT-BROWSER.md) | Applied analysis of `possibilities--agent-browser`. Heavily revised under adversarial review, then corrected by measurement. |
+| [`lab/`](./lab) | Executable checks. Where a document and the lab disagree, the lab wins. |
 
 ## Read the confidence tier before acting on any claim
 
@@ -32,45 +32,19 @@ agreed on. Source review converges confidently on wrong answers.
 
 ## What is established
 
-Measured, with controls:
+Deliberately not summarised here. [`lab/FINDINGS.md`](./lab/FINDINGS.md) is the
+authoritative record — twelve numbered findings, each with the raw observation
+and the experiment that produced it, plus a table of what an earlier confound
+invalidated and what survived re-measurement.
 
-- `BROWSERLESS_STEALTH` defaults to `true`; every Browserless session requests
-  suppression unless opted out. The full value matrix has an inversion worth
-  knowing: `""`, `"0"`, `"false"` all *disable* it, so the only way to get
-  stealth is to never set the variable.
-- WebRTC containment is gated on `--allowed-domains`, not `--proxy`. A proxied
-  session with no allowlist leaks the real IP over UDP. Also unavailable
-  entirely in `--cdp` attach mode.
-- `tab_new` is a **whole-target propagation failure**, not a first-request race.
-  Navigation, subresources and page fetches from a new tab all miss the
-  override.
-- `--user-agent` suppresses Client Hints entirely (`Sec-CH-UA` absent, `brands`
-  emptied) rather than leaving stale values — a combination no real Chrome
-  produces.
-- The stock headless default violates the handbook's *hard* geometry invariant
-  three ways: screen 800×600, viewport 1280×633, `outerWidth` 0.
-- §3.1's React correctness bug **does not exist** as a live defect. Two of the
-  four sites are unreachable from any shipped client; the reachable one updates
-  React correctly.
-- Copied headers cannot reproduce browser transport. curl carrying Chrome's
-  exact header set offered 49 cipher suites to Chrome's 16, 6 extensions to 17,
-  and no GREASE. The handbook's myth-table entry is now measured.
-- Chrome 150 offers X25519MLKEM768 (`0x11ec`) as a real 1216-byte key share.
-  A strong browser-versus-generic-client discriminator today, and the single
-  most likely component to move as post-quantum deployment matures.
-- **Do not baseline JA3.** Chrome shuffles ClientHello extension order every
-  connection — 10 handshakes, 10 distinct orders, one constant extension set —
-  so a pinned JA3 gate fails 100% of the time on an unmodified browser. Assert
-  order-independent things: the extension set, the cipher set, GREASE presence,
-  groups minus the GREASE slot, ALPN.
-- At the page layer everything measured is **stable** across cold runs,
-  including a byte-identical canvas hash. The stability table is in
-  `lab/FINDINGS.md`; it is what tells you which gates can be exact and which
-  must be distributions.
-- Identity propagation fails in two places, and they compose: new targets
-  (`tab_new`) and **service workers**. A fix framed as "create the target at
-  `about:blank` first" addresses neither. What is missing is one initializer
-  every realm and target runs before it can emit traffic.
+A restatement in this file would be a second copy that drifts. Finding 8 already
+needed correcting once after a later experiment, and if that correction had
+needed to land in two places, one of them would still be wrong.
+
+Start with findings 10-12 if you are short of time: identity fails to propagate
+to service workers, everything at the page layer is stable across cold runs
+including a byte-identical canvas hash, and JA3 is unusable as a regression gate
+because Chrome shuffles ClientHello extension order every connection.
 
 ## Build order
 
@@ -126,16 +100,18 @@ check.
 
 ## Deliberately not done
 
-HTTP/2 framing — SETTINGS, window sizes and pseudo-header order (the TLS layer
-is done; `lab/tls-origin.mjs` only decodes HTTP/1.1 request lines today). A JA4
-implementation, if you want a stable transport hash — the sorting rule is the
-whole point and we deliberately did not hand-roll it. React 19
-(dropped UMD; needs a bundled fixture). Real proxy and paid-provider arms.
-Branded DOM mutations under a `MutationObserver`. `--profile <name>`
-copy-and-discard. The four repository security concerns in the companion's
-out-of-scope block — of those, **plugins as unsandboxed child processes
-inheriting the daemon environment** is a larger risk than anything page-visible
-in either document, and deserves its own review.
+The measurement backlog lives in [`lab/README.md`](./lab/README.md) under
+"Wanted next" — HTTP/2 framing, a JA4 implementation, React 19, branded DOM
+mutations, `--profile <name>` copy-and-discard.
+
+One item is not a measurement task and should not be left to whoever picks up
+the lab: **plugins are unsandboxed child processes inheriting the daemon
+environment** (`plugins.rs:201-217`). Combined with the `LaunchMutation` surface
+in the companion's §2.1, that is a code-execution and secret-exposure boundary —
+a larger real risk than anything page-visible in either document. It is
+source-verified, never measured, and needs a security owner rather than another
+experiment. The other three repository concerns are in the companion's
+out-of-scope block.
 
 ## The one-sentence version
 
