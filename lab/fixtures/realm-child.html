@@ -1,0 +1,10 @@
+<!doctype html><meta charset=utf-8><script>
+const n = navigator;
+fetch('/__collect',{method:'POST',headers:{'content-type':'application/json'},
+ body:JSON.stringify({kind:'realm',realm:location.search.includes('srcdoc')?'srcdoc':'same-origin-iframe',
+  userAgent:n.userAgent,languages:[...(n.languages||[])],platform:n.platform,
+  hardwareConcurrency:n.hardwareConcurrency,deviceMemory:n.deviceMemory??null,
+  timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
+  hasWebdriver:'webdriver' in n,webdriver:n.webdriver??null,
+  uaBrands:n.userAgentData?n.userAgentData.brands:null})});
+</script>

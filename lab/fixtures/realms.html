@@ -1,0 +1,15 @@
+<!doctype html><meta charset=utf-8><title>realms</title><body>
+<iframe src="/realm-child.html"></iframe>
+<script>
+const n = navigator;
+const report = (realm) => fetch('/__collect',{method:'POST',headers:{'content-type':'application/json'},
+ body:JSON.stringify({kind:'realm',realm,
+  userAgent:n.userAgent,languages:[...(n.languages||[])],platform:n.platform,
+  hardwareConcurrency:n.hardwareConcurrency,deviceMemory:n.deviceMemory??null,
+  timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
+  hasWebdriver:'webdriver' in n,webdriver:n.webdriver??null,
+  uaBrands:n.userAgentData?n.userAgentData.brands:null})});
+report('main-page');
+new Worker('/worker.js');
+navigator.serviceWorker?.register('/sw.js', { scope: '/sw-scope/' }).catch(()=>{});
+</script></body>

@@ -263,6 +263,40 @@ clients. The header premise is true by construction (curl was passed the headers
 with `-H`) but is not independently asserted here. Decoding h2 framing, and
 capturing SETTINGS and pseudo-header order, is the obvious next increment.
 
+### 10. Patch completeness: the override stops at the service worker (E08)
+
+The handbook devotes a section to this and asserts most shims fail it. Measured
+across four realms — main page, same-origin iframe, dedicated worker, service
+worker.
+
+**Stock is clean.** Every shared system surface agrees across all four:
+`America/New_York`, 10 cores, 16 GB, `MacIntel`, identical languages. No
+browser-level inconsistency to work around.
+
+**Spec conformance holds too.** `webdriver` is present on the page and iframe
+and **absent from `WorkerNavigator`** in both worker realms — which is correct
+per the WebDriver spec note, not a defect, and worth knowing before someone
+"fixes" it.
+
+**The override does not survive.** With `--user-agent` set:
+
+| realm | User-Agent |
+|---|---|
+| main page | override |
+| same-origin iframe | override |
+| dedicated worker | override |
+| **service worker** | **the real `HeadlessChrome/150…`** |
+
+Three of four realms carry it and the service worker does not — the exact
+failure mode the handbook's patch-completeness test exists to catch, in the most
+durable realm of the four. A service worker outlives navigations, so an origin
+can query it long after the page that set the override is gone.
+
+Note how this composes with finding 6: identity fails to propagate to new
+*targets* **and** to service workers. Any fix framed as "create the target at
+`about:blank` first" addresses neither. What is missing is a single initializer
+that every realm and every target runs before it can emit traffic.
+
 ---
 
 ## A confound that invalidated part of an earlier round

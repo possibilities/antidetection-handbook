@@ -8,6 +8,14 @@ The handbook is general. This document answers a narrower question: *what does a
 
 Claims cite `path:line`. Where the answer is "this does not exist," it says so — and where I searched for something and found nothing, it says that too, since the two are different.
 
+**How to read this document.** Claims are not equally trustworthy, and the tag on each section says which kind it is:
+
+- **`[measured]`** — an experiment in [`lab/`](./lab) produced it, with a control proving the subject actually did something. Act on these; the evidence is in [`lab/FINDINGS.md`](./lab/FINDINGS.md).
+- **`[source]`** — read from code, cited `path:line`, checked by more than one reader. Reliable for what the code *says*; silent about what it does at runtime.
+- **`[reasoned]`** — an inference nobody has run. A hypothesis with an expiry date.
+
+This is not decoration. Of the claims that got measured, **three went against what source review had concluded** — including one that six review rounds and two independent reviewers had all agreed on. Source review converges confidently on wrong answers, so the tag is the most important word in each heading.
+
 ---
 
 ## 1. The short version
@@ -34,7 +42,7 @@ The cascade the project wants is a good idea, but §4 argues it should be invert
 
 ## 2. What each backend actually presents
 
-### 2.1 Native CDP backend, local Chrome
+### 2.1 Native CDP backend, local Chrome `[source]` `[measured: defaults, geometry]`
 
 `cli/src/native/cdp/chrome.rs` builds the launch line. The identity-relevant flags:
 
@@ -96,7 +104,7 @@ For detection purposes this is the **least** disguisable backend, and that is fi
 
 `cli/src/native/webdriver/backend.rs`, with `appium.rs` for mobile. WebDriver sets the `webdriver-active` flag by specification — `navigator.webdriver` is `true` and is *supposed* to be. This is the most standards-cooperative backend in the project.
 
-### 2.4 Remote providers, including Kernel
+### 2.4 Remote providers, including Kernel `[measured: stealth defaults]` `[source: the rest]`
 
 `cli/src/native/providers.rs` resolves a CDP WebSocket URL for `browserbase`, `browserless`, `browser-use`, `kernel`, `agentcore`, and plugin providers (`providers.rs:50-195`). The Kernel path (`connect_kernel`, `providers.rs:393`) talks to `https://api.onkernel.com` (`providers.rs:396`, overridable via `KERNEL_ENDPOINT`) and returns a WebSocket the client drives.
 
@@ -116,7 +124,7 @@ Practically: when using a remote provider, agent-browser is a **client of someon
 
 ---
 
-### 2.5 `read` — the backend that isn't a browser
+### 2.5 `read` — the backend that isn't a browser `[source]`
 
 `agent-browser read` does not drive a browser at all. `cli/src/read.rs` fetches over `reqwest` with `rustls-tls-webpki-roots` (`cli/Cargo.toml:25`) and sends a self-describing User-Agent:
 
@@ -136,7 +144,7 @@ Two things follow. First, the URL form belongs in the §6 measurement matrix as 
 
 These are defects independent of detection. Each would be worth fixing if no bot control existed anywhere.
 
-### 3.1 Mixed input provenance
+### 3.1 Mixed input provenance `[measured]`
 
 The main interaction paths use CDP input — `Input.dispatchMouseEvent`, `dispatchKeyEvent`, `dispatchTouchEvent`, `insertText` (`interaction.rs:96, 169, 253, 337, 914, 954, 1097`; `actions.rs:5769, 5835, 7327`). Those produce `isTrusted === true`.
 
@@ -173,7 +181,7 @@ What remains in `fill` is a provenance contradiction rather than a correctness b
 
 **Fix:** for the four terminal-write sites, call the native prototype setter before dispatching. For `fill`, decide deliberately whether the verb should emit a key sequence — `insertText` is right for speed and wrong for anything testing key handling — and assert the expected event sequence either way. The handbook's *Native behavior beats broad spoofing* is the general form.
 
-### 3.2 Branded identifiers and unmasked wrappers in page scope
+### 3.2 Branded identifiers and unmasked wrappers in page scope `[measured: wrapper nativeness]` `[source: the inventory]`
 
 Several separate injections put a stable, greppable tool name into page-reachable state, and the DOM mutations are the ones most likely to be on. Beyond the two script injections below, the snapshot and locator paths write branded **attributes and nodes** into the live document: `data-agent-browser-located` on semantic-locator targets (`actions.rs:8084`, queried at `:8111`, removed at `:8123`), `data-__ab-ci` on cursor-enriched snapshots, and an `__agent_browser_annotations__` overlay element for screenshots. A `MutationObserver` sees every one of them, and unlike the profiler globals these ride ordinary snapshot and click flows rather than an opt-in flag.
 
@@ -209,13 +217,13 @@ It is worth being explicit about the option *not* taken for the remaining in-pag
 
 The reason to do any of this is hygiene before fingerprinting. A page can currently read *and tamper with* `__AB_RENDERS_ORIG_COMMIT__`, and can enumerate which of the operator's security controls are active — both are defects whatever a detector does with them.
 
-### 3.3 No identity manifest
+### 3.3 No identity manifest `[source]`
 
 There is no single object that owns the relationship between browser version, platform, locale, timezone, viewport, GPU class, font corpus, proxy, and profile. Flags are assembled independently in `chrome.rs`, and nothing rejects a contradiction before launch.
 
 This is the handbook's *One source of truth* principle, and its absence is what makes every other improvement fragile: a proxy in Frankfurt with a `America/Los_Angeles` timezone and an `en-US` locale is currently a configuration nobody will catch. Adding a manifest is the single highest-leverage structural change, because the cascade in §4 needs somewhere to record what each tier is allowed to change.
 
-### 3.4 `--user-agent` overrides the string and nothing else
+### 3.4 `--user-agent` overrides the string and nothing else `[measured]`
 
 `browser.rs:435` and `browser.rs:1325` both issue:
 
@@ -274,7 +282,10 @@ Second, this is **not a first-request race** — measured and settled (E05). Thr
 
 ---
 
-## 4. The cascade
+## 4. The cascade `[reasoned]`
+
+> **Everything in this chapter is design, not measurement.** No part of it has been built or run. It is the most heavily reviewed material here — the framework was broken and rebuilt twice under adversarial review — but reviewed is not the same as tested, and §4.5's invariants in particular describe plumbing that does not exist yet.
+
 
 The proposal is a system that starts with the most agent-browser-native approach and falls back toward heavier, more faithful backends. That is a good architecture. Everything depends on what triggers the fallback — and the first thing to notice is that the trigger you want is not usually available to you.
 
@@ -547,7 +558,7 @@ There is currently **no backend or provider cascade** in the codebase — I sear
 
 ---
 
-## 5. What "undetectable" can and cannot mean here
+## 5. What "undetectable" can and cannot mean here `[reasoned]` `[measured: the WebRTC gating]`
 
 Splitting the ask honestly requires a test, because the obvious objection to any such split is that it is rationalization. Every item in the first pile below *does* make the browser harder to detect. If "harder to detect" were the criterion, the piles would collapse into one.
 
@@ -609,7 +620,7 @@ Calibrate the timeline honestly: the working group exists, but nothing has been 
 
 ---
 
-## 6. Measure before optimizing
+## 6. Measure before optimizing `[partly built — see lab/]`
 
 Nothing above should be taken on faith, including this document. The handbook's *Measurement and regression testing* chapter applies directly, and agent-browser has an advantage: `cli/src/doctor/` already exists as a place to put diagnostics.
 
