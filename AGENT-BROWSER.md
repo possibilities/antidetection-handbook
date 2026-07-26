@@ -90,6 +90,19 @@ Resist ranking this against the §3 artifacts; they are different kinds of signa
 
 Persistent profiles are supported via `--profile`; they are simply not the default. Whether that default is right is a product decision — ephemerality is a genuine privacy and isolation feature — but it should be a deliberate one rather than a side effect.
 
+**A second stock default, and this one is not defensible: the window geometry is arithmetically impossible.** Measured with nothing overridden (E03, re-measured natively in E09 and identical on every one of six cold runs):
+
+```
+screen      : 800 × 600
+availWidth… : 800 × 600
+innerWidth… : 1280 × 633     <- viewport wider AND taller than its own screen
+outerWidth… : 0 × 0          <- the window has no outer dimensions at all
+```
+
+Three impossibilities at once, none requiring a flag. A viewport cannot exceed the screen displaying it, and a window containing a 1280px viewport cannot have zero width. The handbook lists "screen/viewport/DPR arithmetically impossible" as a **hard manifest invariant** — a zero-tolerance check — and the default configuration violates it three ways before any identity work begins.
+
+This deserves emphasis relative to §3's artifacts: it is deterministic, present in every session, requires no opt-in feature, and is checkable by three integer comparisons. Chrome 142 added `--screen-info` and `Emulation.addScreen` (see the handbook's headless section), so it is also cheap to fix and cheap to assert against.
+
 **One sharp edge inside `--profile` itself.** It persists only in its *path* form. Given a Chrome profile **name**, `chrome.rs:564-580` locates your real Chrome user-data directory, **copies** the profile to a temp dir, and rewrites the option to point at the copy — then hands that temp dir to `ChromeProcess.temp_user_data_dir` (`chrome.rs:595`), where the same `Drop` deletes it. So `agent-browser --profile Default` reads your existing login state and discards every write the session makes. That is defensible as a safety property (your real profile is never mutated) but it is the opposite of what "persistent profile" implies, and anyone reaching for `--profile` to build continuity needs to pass a path.
 
 The `--remote-debugging-port=0` choice deserves emphasis because it is easy to misread as incidental. Chromium special-cases it deliberately: port `0` is the ephemeral port ChromeDriver uses, so it counts as automation, whereas a fixed port is assumed to be a developer attaching a debugger and leaves the feature unset. The handbook covers this in *Automation signals and control stacks*. The local native Chrome path therefore reports its automation status truthfully by default — the cooperative behavior, arrived at as a side effect. §2.4 covers where that stops being true.
@@ -626,17 +639,24 @@ Calibrate the timeline honestly: the working group exists, but nothing has been 
 
 ## 6. Measure before optimizing `[partly built — see lab/]`
 
-Nothing above should be taken on faith, including this document. The handbook's *Measurement and regression testing* chapter applies directly, and agent-browser has an advantage: `cli/src/doctor/` already exists as a place to put diagnostics.
+Nothing above should be taken on faith, including this document.
 
-Minimum useful harness:
+**Some of this is now built.** [`lab/`](./lab) is a working harness: an observing origin, a TLS-terminating origin that parses the raw ClientHello, fixtures that report their own view, nine experiments and a provenance-stamped runner. Items 1, 2, 4 and 5 below are substantially covered; read [`lab/FINDINGS.md`](./lab/FINDINGS.md) before rebuilding any of them. What follows is the target shape, with what remains marked.
 
-1. **A first-party origin** that records what each backend actually emits: TLS ClientHello and JA4, ALPN, HTTP version, H2 SETTINGS and pseudo-header order, full header order, source IP and ASN. Never a third-party checker, and never with production credentials.
-2. **A cross-context probe** asserting that UA, languages, platform, `hardwareConcurrency`, and timezone agree across page, iframe, dedicated worker, and service worker. This catches emulation that only applied to the main realm — the most common silent failure.
-3. **A per-backend cohort baseline.** Native-headless, native-headful, Lightpanda, WebDriver, URL-form `read`, and **each remote provider separately** are all different cohorts. `read` is the easiest to forget and the most distinctive, since its rustls handshake looks nothing like Chrome's. A remote provider's output is a measurement of that provider and can change without notice, so re-baseline on a schedule rather than on suspicion.
-4. **Positive and negative controls.** Include a plain WebDriver session with `navigator.webdriver === true` to prove the probe can see an intentional signal, and a stock browser to measure false positives.
-5. **A per-verb event-provenance contract**, asserted in tests. Not a blanket `isTrusted === true`: `dispatch_event` is *contractually* untrusted (§3.1) and the select paths have their own semantics. Write down what each verb should emit — trusted or not, which events, in what order — and assert that. A blanket assertion would be wrong for at least two verbs and would still have caught §3.1.
+**Two results from that harness change what you should assert**, and they point in opposite directions:
 
-Run these per Chrome release. Every version-specific claim in this document is a hypothesis with an expiry date.
+- **At the page layer, everything measured was stable** across six cold runs — UA, platform, languages, timezone, cores, memory, screen, viewport, DPR, WebGL strings, UA-CH brands, and a **byte-identical canvas hash**. On a pinned build these are exact invariants, not distributions. It also means canvas noise would be trivially detectable here by repeat-reading.
+- **At the transport layer, nothing is stable.** Chrome shuffles ClientHello extension order every connection — 10 handshakes produced 10 distinct orders of one constant 15-extension set — so **JA3 changes run to run from an unmodified browser** and a pinned JA3 gate fails 100% of the time. Assert order-independent facts instead: the extension set, the cipher set, GREASE presence, groups minus the GREASE slot, ALPN. This is why JA4 sorts before hashing, and why `lab/tls-origin.mjs` deliberately does not hand-roll JA4.
+
+Target shape (**built** / *remaining*):
+
+1. **Built** — a first-party origin recording what each backend emits: TLS ClientHello and JA4, ALPN, HTTP version, H2 SETTINGS and pseudo-header order, full header order, source IP and ASN. Never a third-party checker, and never with production credentials.
+2. **Built** (E08) — a cross-context probe asserting UA, languages, platform, `hardwareConcurrency` and timezone agree across page, iframe, dedicated worker and service worker. It found that a `--user-agent` override reaches three of those four and **stops at the service worker**. This catches emulation that only applied to the main realm — the most common silent failure.
+3. *Remaining* — a per-backend cohort baseline. Native-headless, native-headful, Lightpanda, WebDriver, URL-form `read`, and **each remote provider separately** are all different cohorts. `read` is the easiest to forget and the most distinctive, since its rustls handshake looks nothing like Chrome's. A remote provider's output is a measurement of that provider and can change without notice, so re-baseline on a schedule rather than on suspicion.
+4. **Built** — positive and negative controls. Include a plain WebDriver session with `navigator.webdriver === true` to prove the probe can see an intentional signal, and a stock browser to measure false positives.
+5. *Remaining* — a per-verb event-provenance contract, asserted in tests. Not a blanket `isTrusted === true`: `dispatch_event` is *contractually* untrusted (§3.1) and the select paths have their own semantics. Write down what each verb should emit — trusted or not, which events, in what order — and assert that. A blanket assertion would be wrong for at least two verbs and would still have caught §3.1.
+
+Run these per Chrome release: `node run-all.mjs` stamps each run with provenance. Every version-specific claim in this document is a hypothesis with an expiry date — and the harness currently measured an *older binary* than the source this document cites, which is the first thing to fix.
 
 ---
 

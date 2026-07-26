@@ -92,6 +92,8 @@ saw for that same navigation.
 correctness finding were dead code. Grep the dispatch table for who actually
 emits an action before ranking a fix.
 
+**When measurement lands on top of reasoning, sweep the whole document.** Folding an empirical result into prose written earlier leaves three kinds of seam, and all three were present here. *Contradictions* — a section concluding there is no live bug and then prescribing the fix anyway; a section measuring four and still saying five. *Orphans* — findings that reached `lab/FINDINGS.md` and never propagated to the applied document, including the single most concrete defect in it. And *stale prescriptions* — a chapter instructing the reader to build a harness that now exists. Adding the finding is the easy half; retracting what it displaced is the half that gets skipped.
+
 **Pin the commit you are citing, and the binary you are measuring.** The subject
 repo advanced six commits mid-analysis, from v0.32.4 to v0.33.0, while the
 installed binary stayed at 0.32.3. Nobody noticed because nothing was pinned.
