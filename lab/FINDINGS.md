@@ -5,8 +5,23 @@ it so it can be re-run. Where an observation contradicts
 [`../AGENT-BROWSER.md`](../AGENT-BROWSER.md), the observation wins and the
 document needs correcting.
 
-**Run environment:** macOS (Apple M4), agent-browser 0.32.3, Chrome/Chromium 150
-headless, 2026-07-25. Every claim here is version-specific.
+**Run environment:** macOS (Apple M4), **agent-browser 0.32.3** binary, Chrome
+150.0.7871.187 headless, node v24.16.0, React 18.3.1 (vendored, digest-pinned).
+Every claim here is version-specific.
+
+**A gap worth knowing about.** The measurements above came from the 0.32.3
+binary; the source citations in [`../AGENT-BROWSER.md`](../AGENT-BROWSER.md) are
+pinned to `3cc7022` (v0.33.0). The tree advanced six commits during the analysis
+and the installed binary was never refreshed to match, so a measured finding and
+a cited line can describe different builds.
+
+Checked rather than assumed: all eight load-bearing claims spot-checked against
+`3cc7022` are still true there — `--remote-debugging-port=0`, the uuid temp
+profile, `setvalue`/`clear` reachable only from the dispatch table,
+`restrict_webrtc = !allowed_domains.is_empty()`, the `userAgent`-only
+`setUserAgentOverride`, `BROWSERLESS_STEALTH`, the `--args` help example, and the
+iOS preset UA. Line numbers moved by up to 190; the behaviour did not. Re-running
+`run-all.mjs` against a 0.33.0 binary is the clean fix and has not been done.
 
 ---
 
@@ -142,7 +157,7 @@ answer went the other way.
 
 **Two of the four "terminal synthetic write" sites are unreachable.** The
 strings `"setvalue"` and `"clear"` appear only in the daemon dispatch table
-(`actions.rs:2316`, `:2326`). No shipped client emits either action — not
+(`actions.rs:2442`, `:2326`). No shipped client emits either action — not
 `commands.rs`, not `mcp.rs`, not `main.rs`. They are latent defects in code
 nothing can call.
 
@@ -151,8 +166,8 @@ CLI verbs, the commands silently did nothing, and **every assertion "passed"** �
 DOM unchanged, React unchanged, zero events. Textbook false positive. Only the
 uncontrolled-input control ("did the write land at all?") exposed it.
 
-**The reachable synthetic write does reach React.** `select` (`commands.rs:521`
-→ `interaction.rs:455` / `actions.rs:8784`) dispatches a bare `change` event:
+**The reachable synthetic write does reach React.** `select` (`commands.rs:528`
+→ `interaction.rs:455` / `actions.rs:8976`) dispatches a bare `change` event:
 
 ```
 after `select #sel gamma`:  selDom="gamma"  selReact="gamma"  selChanges=1

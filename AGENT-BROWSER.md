@@ -2,7 +2,11 @@
 
 **A companion to [The Antidetection Handbook](./README.md), specific to [`possibilities--agent-browser`](https://agent-browser.dev).**
 
-> **Snapshot:** 2026-07-25. Claims below were read from the working tree at that date and cite `path:line`. Line numbers drift; re-read before relying on any of them.
+> **Source snapshot:** `possibilities--agent-browser@3cc7022271235694b5b5ce8aaea8bbfaa66e8cd5` — package version 0.33.0, but three commits past the `v0.33.0` tag (`v0.33.0-3-g3cc7022`), so do not resolve citations against the tag. Every `path:line` below resolves against **that exact object**.
+>
+> **Measurement snapshot:** the experiments in [`lab/`](./lab) ran against the **0.32.3** binary (`v0.32.3` = `81c336c`) and Chrome 150.0.7871.187. That is an older build than the source above, so a measured finding and a cited line can in principle describe different code; see [`lab/FINDINGS.md`](./lab/FINDINGS.md) for the reconciliation.
+>
+> Pinning both is not ceremony. An earlier revision pinned neither, the tree advanced six commits mid-analysis, and **68 of 148 cited line numbers went stale** — citations into unchanged files were fine, which is why the damage was invisible. Nearly every underlying claim survived; **one did not** (§3.2, isolated worlds). That mix is the worst possible failure: the document still reads as authoritative, and the first citation a reader checks may not resolve.
 
 The handbook is general. This document answers a narrower question: *what does agent-browser actually look like on the wire and in the page today, and what should be built next?*
 
@@ -10,7 +14,7 @@ Claims cite `path:line`. Where the answer is "this does not exist," it says so �
 
 **How to read this document.** Claims are not equally trustworthy, and the tag on each section says which kind it is:
 
-- **`[measured]`** — an experiment in [`lab/`](./lab) produced it, with a control proving the subject actually did something. Act on these; the evidence is in [`lab/FINDINGS.md`](./lab/FINDINGS.md).
+- **`[measured]`** — an experiment in [`lab/`](./lab) produced it, with a control proving the subject actually did something. Authoritative **for the measurement snapshot** (0.32.3 / Chrome 150) and needing revalidation against a newer build, since the source pin is already ahead of it. Evidence in [`lab/FINDINGS.md`](./lab/FINDINGS.md).
 - **`[source]`** — read from code, cited `path:line`, checked by more than one reader. Reliable for what the code *says*; silent about what it does at runtime.
 - **`[reasoned]`** — an inference nobody has run. A hypothesis with an expiry date.
 
@@ -22,7 +26,7 @@ This is not decoration. Of the claims that got measured, **three went against wh
 
 agent-browser's native backend is **not** trying to hide, and currently could not hide if it wanted to. It launches Chrome with `--remote-debugging-port=0`, which sets Chromium's `AutomationControlled` runtime feature, which makes `navigator.webdriver` return `true`. Add `--headless=new`, `Runtime.enable`, and a fresh throwaway profile on every launch, and any site that looks at all sees automation.
 
-In GPU-less containers and CI the picture is starker still — software rendering and a thin container font corpus add a recognizable cohort on top of the automation signals. On a developer's own machine it is milder: the SwiftShader *routing* is gated on `options.webgpu && cfg!(target_os = "linux")` (`chrome.rs:418`), so a macOS or Windows host keeps hardware Metal/D3D and the real OS font corpus. What every headless launch gets is the permissive `--enable-unsafe-swiftshader`, which changes nothing where a working GPU exists.
+In GPU-less containers and CI the picture is starker still — software rendering and a thin container font corpus add a recognizable cohort on top of the automation signals. On a developer's own machine it is milder: the SwiftShader *routing* is gated on `options.webgpu && cfg!(target_os = "linux")` (`chrome.rs:428`), so a macOS or Windows host keeps hardware Metal/D3D and the real OS font corpus. What every headless launch gets is the permissive `--enable-unsafe-swiftshader`, which changes nothing where a working GPU exists.
 
 That is a defensible default — for the **local Chrome path**. The picture changes twice over.
 
@@ -48,13 +52,13 @@ The cascade the project wants is a good idea, but §4 argues it should be invert
 
 | Flag | Line | Consequence |
 |---|---|---|
-| `--remote-debugging-port=0` | `chrome.rs:398` | **Sets `AutomationControlled`.** `navigator.webdriver === true`. |
-| `--headless=new` | `chrome.rs:444` | Also sets `AutomationControlled`; no platform windows; skipped when extensions are loaded. |
-| `--use-angle=vulkan`, `--use-vulkan=swiftshader`, `--use-webgpu-adapter=swiftshader` | `chrome.rs:424-426` | Forces software rendering — but only under `options.webgpu && cfg!(target_os = "linux")`. macOS and Windows keep hardware Metal/D3D. |
-| `--enable-unsafe-swiftshader` | `chrome.rs:456` | *Permissive, not forcing.* Allows the software fallback so WebGL doesn't hard-fail where drivers are absent (`chrome.rs:452-455`). On a host with a working GPU it changes nothing observable. |
-| `--user-data-dir=…` | `chrome.rs:470, 477` | Persistence when `--profile` is given. **Absent it, every launch mints a fresh `agent-browser-chrome-<uuid>` temp profile** (`chrome.rs:473-478`) — see below. |
-| `--proxy-server=…`, `--proxy-bypass-list=…` | `chrome.rs:460, 464` | Chromium-native proxying, so browser TLS is preserved through a `CONNECT` tunnel. |
-| `--ignore-certificate-errors` | `chrome.rs:482` | Conditional, but a real risk if it is ever on by default. |
+| `--remote-debugging-port=0` | `chrome.rs:408` | **Sets `AutomationControlled`.** `navigator.webdriver === true`. |
+| `--headless=new` | `chrome.rs:451` | Also sets `AutomationControlled`; no platform windows; skipped when extensions are loaded. |
+| `--use-angle=vulkan`, `--use-vulkan=swiftshader`, `--use-webgpu-adapter=swiftshader` | `chrome.rs:434-436` | Forces software rendering — but only under `options.webgpu && cfg!(target_os = "linux")`. macOS and Windows keep hardware Metal/D3D. |
+| `--enable-unsafe-swiftshader` | `chrome.rs:463` | *Permissive, not forcing.* Allows the software fallback so WebGL doesn't hard-fail where drivers are absent (`chrome.rs:459-462`). On a host with a working GPU it changes nothing observable. |
+| `--user-data-dir=…` | `chrome.rs:477, 484` | Persistence when `--profile` is given. **Absent it, every launch mints a fresh `agent-browser-chrome-<uuid>` temp profile** (`chrome.rs:480-485`) — see below. |
+| `--proxy-server=…`, `--proxy-bypass-list=…` | `chrome.rs:467, 471` | Chromium-native proxying, so browser TLS is preserved through a `CONNECT` tunnel. |
+| `--ignore-certificate-errors` | `chrome.rs:489` | Conditional, but a real risk if it is ever on by default. |
 
 The **native Chrome launch line** carries no stealth flag. That is a narrower statement than it looks, and §2.4 covers the provider paths where it stops being true.
 
@@ -65,7 +69,7 @@ Even for local Chrome, the repo ships a complete suppression *surface*, and its 
                    e.g., --args "--no-sandbox,--disable-blink-features=AutomationControlled"
 ```
 
-That is `output.rs:3521` — the automation-suppression flag is the illustrative example for `--args`. Alongside it: `--init-script` / `AGENT_BROWSER_INIT_SCRIPTS` registers arbitrary page scripts before first navigation, `--user-agent` / `AGENT_BROWSER_USER_AGENT` overrides the UA, and `--extension` loads extensions. The plugin protocol exposes the same surface programmatically — `LaunchMutation` carries `args`, `extensions`, `init_scripts`, and `user_agent` (`plugins.rs:71-80`), and the protocol's own test fixture demonstrates it with:
+That is `output.rs:3689` — the automation-suppression flag is the illustrative example for `--args`. Alongside it: `--init-script` / `AGENT_BROWSER_INIT_SCRIPTS` registers arbitrary page scripts before first navigation, `--user-agent` / `AGENT_BROWSER_USER_AGENT` overrides the UA, and `--extension` loads extensions. The plugin protocol exposes the same surface programmatically — `LaunchMutation` carries `args`, `extensions`, `init_scripts`, and `user_agent` (`plugins.rs:71-80`), and the protocol's own test fixture demonstrates it with:
 
 ```json
 {"launch":{"args":["--disable-blink-features=AutomationControlled"],
@@ -76,9 +80,9 @@ That is `plugins.rs:1272` — the handbook's canonical anti-pattern, shipped as 
 
 This matters for §5. Suppression is not hypothetical future work requiring a design decision; it is **reachable today through documented flags, with no authorization gate anywhere in the path**. The engineering question is not whether to build it but whether to put a gate in front of what already exists.
 
-**The default profile is a significant signal that no flag anyone chose produces.** Without `--profile`, `chrome.rs:473-478` creates `agent-browser-chrome-<uuid>` in the temp directory for each browser launch, and `Drop for ChromeProcess` (`chrome.rs:67-80`) deletes it with `remove_dir_all` when the process ends.
+**The default profile is a significant signal that no flag anyone chose produces.** Without `--profile`, `chrome.rs:480-485` creates `agent-browser-chrome-<uuid>` in the temp directory for each browser launch, and `Drop for ChromeProcess` (`chrome.rs:67-80`) deletes it with `remove_dir_all` when the process ends.
 
-Be precise about the lifetime, because it cuts both ways. State *does* accumulate within a live session — the daemon holds one browser process across many commands, so cookies set on the third command are visible on the tenth. But every session begins from nothing and discards everything on close. There is no path by which a default-configured profile ever ages.
+Be precise about the lifetime, because it cuts both ways. State *does* accumulate within a live session — the daemon holds one browser process across many commands, so cookies set on the third command are visible on the tenth. But every session begins from nothing and discards everything on close, and since `3cc7022` the daemon carries a default one-hour idle timeout, which adds one automatic teardown path. Do not over-read it: it does not close headed or extension-forced-headed browsers, exempts Safari/iOS WebDriver and user-attached CDP sessions, is disabled by `AGENT_BROWSER_IDLE_TIMEOUT_MS=0`, and never fires while commands keep resetting it. The precise claim is narrower than "profiles never age": an *ephemeral* profile does not survive session teardown, and an active session can live indefinitely.
 
 So the handbook's *state* layer — profile continuity, cookies, caches, service workers, permission decisions — is empty at the start of every session and permanently discarded at the end.
 
@@ -86,11 +90,11 @@ Resist ranking this against the §3 artifacts; they are different kinds of signa
 
 Persistent profiles are supported via `--profile`; they are simply not the default. Whether that default is right is a product decision — ephemerality is a genuine privacy and isolation feature — but it should be a deliberate one rather than a side effect.
 
-**One sharp edge inside `--profile` itself.** It persists only in its *path* form. Given a Chrome profile **name**, `chrome.rs:557-573` locates your real Chrome user-data directory, **copies** the profile to a temp dir, and rewrites the option to point at the copy — then hands that temp dir to `ChromeProcess.temp_user_data_dir` (`chrome.rs:588`), where the same `Drop` deletes it. So `agent-browser --profile Default` reads your existing login state and discards every write the session makes. That is defensible as a safety property (your real profile is never mutated) but it is the opposite of what "persistent profile" implies, and anyone reaching for `--profile` to build continuity needs to pass a path.
+**One sharp edge inside `--profile` itself.** It persists only in its *path* form. Given a Chrome profile **name**, `chrome.rs:564-580` locates your real Chrome user-data directory, **copies** the profile to a temp dir, and rewrites the option to point at the copy — then hands that temp dir to `ChromeProcess.temp_user_data_dir` (`chrome.rs:595`), where the same `Drop` deletes it. So `agent-browser --profile Default` reads your existing login state and discards every write the session makes. That is defensible as a safety property (your real profile is never mutated) but it is the opposite of what "persistent profile" implies, and anyone reaching for `--profile` to build continuity needs to pass a path.
 
 The `--remote-debugging-port=0` choice deserves emphasis because it is easy to misread as incidental. Chromium special-cases it deliberately: port `0` is the ephemeral port ChromeDriver uses, so it counts as automation, whereas a fixed port is assumed to be a developer attaching a debugger and leaves the feature unset. The handbook covers this in *Automation signals and control stacks*. The local native Chrome path therefore reports its automation status truthfully by default — the cooperative behavior, arrived at as a side effect. §2.4 covers where that stops being true.
 
-**Protocol surface.** `Runtime.enable`, `Page.enable`, and `Network.enable` are issued on session setup (`browser.rs:657-708`, `actions.rs:2754-2760`, `state.rs:164-167`). `Runtime.enable` is the classic CDP tell. The V8 changes of May 2025 killed the popular `Error.stack` side-effect detector, but execution-context disclosure remains observable, and it is a hypothesis to re-measure per Chrome release rather than a settled fact.
+**Protocol surface.** `Runtime.enable`, `Page.enable`, and `Network.enable` are issued on session setup (`browser.rs:718-875`, `actions.rs:2881-2887`, `state.rs:164-167`). `Runtime.enable` is the classic CDP tell. The V8 changes of May 2025 killed the popular `Error.stack` side-effect detector, but execution-context disclosure remains observable, and it is a hypothesis to re-measure per Chrome release rather than a settled fact.
 
 **Snapshot.** `snapshot.rs` reads the accessibility tree over the protocol — `Accessibility.enable` then `Accessibility.getFullAXTree` (`snapshot.rs:228, 310, 315`). That is a protocol-side read and is **not** page-observable, which is a genuinely good design choice: the *accessibility read itself* costs nothing in page surface. Be precise about the scope of that praise, though — the `snapshot` verb as shipped is not free, because supplementary `Runtime.evaluate` and `Runtime.callFunctionOn` calls (`snapshot.rs:242, 469, 719, 817`) do execute in the page.
 
@@ -134,7 +138,7 @@ const USER_AGENT_VALUE: &str = concat!("agent-browser/", env!("CARGO_PKG_VERSION
 
 That is `read.rs:13`, sent at `read.rs:331`. This is a fifth cohort with a JA3/JA4 nothing like Chrome's — rustls, not BoringSSL — and no browser identity whatsoever.
 
-This applies to the **URL-argument form only**. `handle_read` (`actions.rs:4237-4278`) has two shapes: given a URL it calls `run_read` (`:4249`), the reqwest path described here; given no URL it makes no HTTP request at all, instead extracting from the browser's already-fetched HTML via `read_json_from_active_html` (`:4274`) and requiring a live browser. So `read` never launches or escalates to a browser — the framing holds — but in the no-URL form neither the rustls handshake nor the honest UA ever happens, because there is no request.
+This applies to the **URL-argument form only**. `handle_read` (`actions.rs:4377-4418`) has two shapes: given a URL it calls `run_read` (`:4389`), the reqwest path described here; given no URL it *usually* makes no HTTP request, extracting from the browser's already-fetched HTML via `read_json_from_active_html` (`:4414`). The exception matters: with `--llms` or `--require-md` it refetches the active URL through `run_read` after all (`:4400-4401`), so the honest-UA reqwest path is reachable without a URL argument too. So `read` never launches or escalates to a browser — the framing holds — but in the no-URL form neither the rustls handshake nor the honest UA ever happens, because there is no request.
 
 Two things follow. First, the URL form belongs in the §6 measurement matrix as its own baseline; a harness that only profiles the CDP backends will miss it entirely. Second, and worth noticing with one caveat: **`read` already does the transparent half of what §5 recommends.** It self-identifies honestly in the header a site actually reads. But a UA string is *not* declared identity in the sense §5 means — any client can send those bytes, so it is unauthenticated self-description, useful for courtesy and log correlation and useless as an allowlist key. Reserve "declared identity" for authenticated credentials and signatures. If the argument in §5 seems abstract, this is the concrete precedent — and the obvious place to attach a Web Bot Auth signature first, since it has no browser stack to reconcile.
 
@@ -146,22 +150,22 @@ These are defects independent of detection. Each would be worth fixing if no bot
 
 ### 3.1 Mixed input provenance `[measured]`
 
-The main interaction paths use CDP input — `Input.dispatchMouseEvent`, `dispatchKeyEvent`, `dispatchTouchEvent`, `insertText` (`interaction.rs:96, 169, 253, 337, 914, 954, 1097`; `actions.rs:5769, 5835, 7327`). Those produce `isTrusted === true`.
+The main interaction paths use CDP input — `Input.dispatchMouseEvent`, `dispatchKeyEvent`, `dispatchTouchEvent`, `insertText` (`interaction.rs:96, 169, 253, 337, 914, 954, 1097`; `actions.rs:5894, 5960, 7513`). Those produce `isTrusted === true`.
 
 But several fast paths synthesize events in the page instead:
 
 Four sites end a write with a synthetic event and no trusted event after it:
 
-- `element.rs:1180-1199` — `set_element_value`, reached from the `setvalue` command (`actions.rs:6722`).
-- `interaction.rs:710-714` — the `clear` verb, reached from `actions.rs:2316` via `handle_clear` (`actions.rs:6511`). Sets `this.value = ''` and fires synthetic `input` and `change`, then returns with no CDP `Input` call.
+- `element.rs:1180-1199` — `set_element_value`, reached from the `setvalue` command (`actions.rs:6875`).
+- `interaction.rs:710-714` — the `clear` verb, reached from `actions.rs:2442` via `handle_clear` (`actions.rs:6664`). Sets `this.value = ''` and fires synthetic `input` and `change`, then returns with no CDP `Input` call.
 - `interaction.rs:455` — `select_option`.
-- `actions.rs:8784` — `select.dispatchEvent(new Event('change', ...))`.
+- `actions.rs:8976` — `select.dispatchEvent(new Event('change', ...))`.
 
 Note that `clear` is the same code as the clear-*step* inside `fill` discussed below, but with a decisive difference: in `fill` a trusted `Input.insertText` follows and repairs it, whereas the standalone `clear` verb ends there.
 
 **Measured, and the answer is not what this section originally claimed** — see [`lab/FINDINGS.md`](./lab/FINDINGS.md), experiment E04, against pinned React 18.3.1.
 
-Two of those four sites are **unreachable**. `"setvalue"` and `"clear"` appear only in the daemon dispatch table (`actions.rs:2316`, `:2326`); no shipped client emits either action, not `commands.rs`, not `mcp.rs`, not `main.rs`. They are latent defects in code nothing can call. That was caught by a control rather than by reading: the first run invoked them as CLI verbs, they silently did nothing, and every assertion "passed" with the DOM unchanged and zero events fired.
+Two of those four sites are **unreachable**. `"setvalue"` and `"clear"` appear only in the daemon dispatch table (`actions.rs:2442`, `:2452`); no shipped client emits either action, not `commands.rs`, not `mcp.rs`, not `main.rs`. They are latent defects in code nothing can call. That was caught by a control rather than by reading: the first run invoked them as CLI verbs, they silently did nothing, and every assertion "passed" with the DOM unchanged and zero events fired.
 
 The one reachable synthetic write — `select` — **does** reach React. Dispatching a bare `change` event updated React state (`selChanges=1`) and the value survived a forced rerender. The `_valueTracker` dedup applies to text inputs, where React reads the `input` event; `<select>` change handling does not go through it.
 
@@ -179,27 +183,27 @@ An untrusted `input` from the clear step (`interaction.rs:147-156`), followed by
 
 What remains in `fill` is a provenance contradiction rather than a correctness bug — and a second artifact worth naming separately. `Input.insertText` produces a trusted `input` event but emits **no `keydown`, `keypress`, or `keyup` at all**. A page with a keystroke listener sees a value materialize without any keys being pressed. That is a sharper and more distinctive signal than an untrusted event, and it is invisible to any test that only asserts final field value.
 
-**Fix:** for the four terminal-write sites, call the native prototype setter before dispatching. For `fill`, decide deliberately whether the verb should emit a key sequence — `insertText` is right for speed and wrong for anything testing key handling — and assert the expected event sequence either way. The handbook's *Native behavior beats broad spoofing* is the general form.
+**Fix.** Not the four terminal-write sites — E04 established there is no live bug there. The real work is a decision about `fill`: whether the verb should emit a key sequence at all, given it currently mixes an untrusted clear with a trusted `insertText` and emits no keystrokes. For `fill`, decide deliberately whether the verb should emit a key sequence — `insertText` is right for speed and wrong for anything testing key handling — and assert the expected event sequence either way. The handbook's *Native behavior beats broad spoofing* is the general form.
 
 ### 3.2 Branded identifiers and unmasked wrappers in page scope `[measured: wrapper nativeness]` `[source: the inventory]`
 
-Several separate injections put a stable, greppable tool name into page-reachable state, and the DOM mutations are the ones most likely to be on. Beyond the two script injections below, the snapshot and locator paths write branded **attributes and nodes** into the live document: `data-agent-browser-located` on semantic-locator targets (`actions.rs:8084`, queried at `:8111`, removed at `:8123`), `data-__ab-ci` on cursor-enriched snapshots, and an `__agent_browser_annotations__` overlay element for screenshots. A `MutationObserver` sees every one of them, and unlike the profiler globals these ride ordinary snapshot and click flows rather than an opt-in flag.
+Several separate injections put a stable, greppable tool name into page-reachable state, and the DOM mutations are the ones most likely to be on. Beyond the two script injections below, the snapshot and locator paths write branded **attributes and nodes** into the live document: `data-agent-browser-located` on semantic-locator targets (`actions.rs:8276`, queried at `:8303`, removed at `:8315`), `data-__ab-ci` on cursor-enriched snapshots, and an `__agent_browser_annotations__` overlay element for screenshots. A `MutationObserver` sees every one of them, and unlike the profiler globals these ride ordinary snapshot and click flows rather than an opt-in flag.
 
-They are also a correctness risk, not only an observability one: the cleanup at `:8123` strips the attribute unconditionally, so a page that already used `data-agent-browser-located` for its own purposes loses it. Prefer backend node IDs or `Runtime.callFunctionOn` object references over marking the DOM at all; failing that, preserve any prior value and use a per-operation random suffix. An `__AB_` or `_agentBrowser` prefix is exactly as identifying as ChromeDriver's `cdc_` properties or Puppeteer's `pptr:` source URLs: any site that has seen agent-browser once can detect it forever with a one-line check.
+They are also a correctness risk, not only an observability one: the cleanup at `:8315` strips the attribute unconditionally, so a page that already used `data-agent-browser-located` for its own purposes loses it. Prefer backend node IDs or `Runtime.callFunctionOn` object references over marking the DOM at all; failing that, preserve any prior value and use a per-operation random suffix. An `__AB_` or `_agentBrowser` prefix is exactly as identifying as ChromeDriver's `cdc_` properties or Puppeteer's `pptr:` source URLs: any site that has seen agent-browser once can detect it forever with a one-line check.
 
-**The profiler globals.** `RENDERS_INIT` installs `__AB_RENDERS__`, `__AB_RENDERS_ACTIVE__`, `__AB_RENDERS_FPS__`, `__AB_RENDERS_START__`, and `__AB_RENDERS_ORIG_COMMIT__` (`react/scripts.rs`). These do require `--enable react-devtools` (or its `react` alias, `actions.rs:3222`), since `RENDERS_INIT` early-returns without the DevTools hook (`react/scripts.rs:202-203`), and the hook is installed only under that flag (`actions.rs:3211-3228`, injected at `actions.rs:3223` and the CDP call at `browser.rs:1487`).
+**The profiler globals.** `RENDERS_INIT` installs `__AB_RENDERS__`, `__AB_RENDERS_ACTIVE__`, `__AB_RENDERS_FPS__`, `__AB_RENDERS_START__`, and `__AB_RENDERS_ORIG_COMMIT__` (`react/scripts.rs`). These do require `--enable react-devtools` (or its `react` alias, `actions.rs:3349`), since `RENDERS_INIT` early-returns without the DevTools hook (`react/scripts.rs:202-203`), and the hook is installed only under that flag (`actions.rs:3338-3355`, injected at `actions.rs:3350` and the CDP call at `browser.rs:1714`).
 
-But **`vitals` is not React-gated**, and it carries the same prefix. `VITALS_INIT` installs `__AB_VITALS__`, `__AB_VITALS_INSTALLED__` (`react/scripts.rs:671-675`), and `__AB_REACT_TIMING__` (`:729`), and is injected at `actions.rs:7094` and `:7102`. The module's own docs call `vitals` a "universal verb" that is "framework-agnostic" and needs no DevTools hook (`react/mod.rs:1-7`). So the `__AB_` namespace reaches ordinary non-React pages, and the blast radius is wider than "React profiling."
+But **`vitals` is not React-gated**, and it carries the same prefix. `VITALS_INIT` installs `__AB_VITALS__`, `__AB_VITALS_INSTALLED__` (`react/scripts.rs:671-675`), and `__AB_REACT_TIMING__` (`:729`), and is injected at `actions.rs:7247` and `:7255`. The module's own docs call `vitals` a "universal verb" that is "framework-agnostic" and needs no DevTools hook (`react/mod.rs:1-7`). So the `__AB_` namespace reaches ordinary non-React pages, and the blast radius is wider than "React profiling."
 
 The contrast with `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` is still instructive but works differently than it first appears: that global is *plausible* — millions of developers have React DevTools installed, so it blends into a real population — and it is also the flag-gated one. The distinctive global is the ungated one.
 
 **The domain-filter script is the larger artifact, and it rides the security path.** With `--allowed-domains` set, `install_domain_filter_script` (`network.rs:161-183`) replaces five page APIs — `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `navigator.sendBeacon` (`network.rs:346-406`). There is no `Function.prototype.toString` masking anywhere in the file. Measured (E06), **four** of them report non-native to a one-line check: `fetch`, `WebSocket`, `EventSource` and `sendBeacon`. `XMLHttpRequest` reports `[native code]` despite being wrapped, so the observable count is four wrappers plus one hard block, not five. `network.rs:299` also serializes the installer into worker bootstrap source via `_agentBrowserInstallDomainFilter.toString()`, placing the literal function name in page-reachable state.
 
-`RTCPeerConnection` belongs in a separate category and it matters for the fix below. `network.rs:407-425` does not wrap it — it installs a constructor that throws unconditionally, with `prototype` set to a frozen null-prototype object and the global defined `writable:false, configurable:false`. That is a **hard block**, detectable by one `new` call or by descriptor inspection without any `toString` involved, and it is the only part of the domain filter that changes what a page can do: WebRTC simply breaks. It is also, per the comment at `chrome.rs:512-514`, the *primary* WebRTC containment control — the launch flag is the backstop.
+`RTCPeerConnection` belongs in a separate category and it matters for the fix below. `network.rs:407-425` does not wrap it — it installs a constructor that throws unconditionally, with `prototype` set to a frozen null-prototype object and the global defined `writable:false, configurable:false`. That is a **hard block**, detectable by one `new` call or by descriptor inspection without any `toString` involved, and it is the only part of the domain filter that changes what a page can do: WebRTC simply breaks. It is also, per the comment at `chrome.rs:519-521`, the *primary* WebRTC containment control — the launch flag is the backstop.
 
-This matters more than the profiler globals for a simple reason: it is attached to a *security* feature. Anyone restricting an agent to an origin allowlist — the cautious, recommended configuration — gets five unmasked monkeypatches, a hard-blocked constructor, and a branded identifier, while the careless user who skips `--allowed-domains` gets none of them. The safety feature is the loudest thing in the page.
+This matters more than the profiler globals for a simple reason: it is attached to a *security* feature. Anyone restricting an agent to an origin allowlist — the cautious, recommended configuration — gets five patched APIs — four of them measurably non-native (E06) — plus a hard-blocked constructor and a branded identifier, while the careless user who skips `--allowed-domains` gets none of them. The safety feature is the loudest thing in the page.
 
-**Fix, priced honestly.** A closure will not work for the `__AB_` state: `RENDERS_INIT` and `VITALS_INIT` are injected via `addScriptToEvaluateOnNewDocument` and their results are read by a *separate, later* `Runtime.evaluate` (`scripts.rs:209` writes, `:392` reads; `:675` writes, `:752` reads). Two independent evaluations cannot share a closure — the global **is** the channel between them, which is why it exists. An isolated world would work but is not cheap either: `grep` across `cli/src` returns zero hits for `createIsolatedWorld`, `worldName`, and `executionContextId`, so it means new CDP plumbing threaded through every evaluate call site.
+**Fix, priced honestly.** A closure will not work for the `__AB_` state: `RENDERS_INIT` and `VITALS_INIT` are injected via `addScriptToEvaluateOnNewDocument` and their results are read by a *separate, later* `Runtime.evaluate` (`scripts.rs:209` writes, `:392` reads; `:675` writes, `:752` reads). Two independent evaluations cannot share a closure — the global **is** the channel between them, which is why it exists. An isolated world would work, and this is the one claim in this document that a source bump genuinely invalidated: it *used* to mean new CDP plumbing, because `grep` across `cli/src` returned zero hits for `createIsolatedWorld`, `worldName` and `executionContextId`. That was true at `b48700c` and is false at `3cc7022` — the vendored-axe `a11y` command uses all three (`a11y/mod.rs:552-562`). It is a specialised path rather than a drop-in profiler channel, so the closure argument below still stands, but the cost has dropped: inspect and refactor the existing isolated-world path before inventing a second one.
 
 The cheap paths are `Runtime.addBinding`, which gives page-to-client communication without a page global at all, or a per-launch randomized property name, which keeps the channel and destroys its value as a stable signature.
 
@@ -207,7 +211,7 @@ The cheap paths are `Runtime.addBinding`, which gives page-to-client communicati
 
 Renaming `_agentBrowserInstallDomainFilter` sits on the line: dropping a vendor name from worker-bootstrap source is mostly hygiene, but do it because tool internals should not be in page scope, not because it is harder to grep.
 
-For the domain filter, the honest task is **"prove which wrappers are redundant,"** not "move them to CDP." An earlier draft said the five HTTP-shaped wrappers could move to `Fetch`/`Network` interception and nothing would be patched. That is wrong, and the code says so itself: `install_domain_filter` already installs **both** layers, and its doc comment (`network.rs:456-467`) states the JS layer exists precisely "for APIs outside Fetch interception, including workers, WebSocket, EventSource, sendBeacon, and RTCPeerConnection." Four of the five are documented as beyond Fetch's reach, and the script also wraps `Worker`, `SharedWorker`, and `importScripts`, which §3.2's inventory did not count.
+For the domain filter, the honest task is **"prove which wrappers are redundant,"** not "move them to CDP." An earlier draft said the five HTTP-shaped wrappers could move to `Fetch`/`Network` interception and nothing would be patched. That is wrong, and the code says so itself: `install_domain_filter` already installs **both** layers, and its doc comment (`network.rs:456-467`) states the JS layer exists precisely "for APIs outside Fetch interception, including workers, WebSocket, EventSource, sendBeacon, and RTCPeerConnection." Of those five, WebSocket, EventSource and sendBeacon are documented as beyond Fetch's reach, and workers and `RTCPeerConnection` are further categories again, and the script also wraps `Worker`, `SharedWorker`, and `importScripts`, which §3.2's inventory did not count.
 
 Realistically only `fetch` and `XMLHttpRequest` are candidates for removal, and even that needs proof rather than assumption. Before deleting any layer, build a parity matrix — page × same-origin iframe × OOPIF × popup × dedicated/shared/service worker, crossed with fetch, XHR, WebSocket, EventSource, beacon, and redirect — and show the protocol layer actually covers the cell. Removing a wrapper that CDP does not replace converts an observability improvement into a containment hole.
 
@@ -225,7 +229,7 @@ This is the handbook's *One source of truth* principle, and its absence is what 
 
 ### 3.4 `--user-agent` overrides the string and nothing else `[measured]`
 
-`browser.rs:435` and `browser.rs:1325` both issue:
+`browser.rs:473` and `browser.rs:1552` both issue:
 
 ```rust
 "Emulation.setUserAgentOverride",
@@ -234,7 +238,7 @@ Some(json!({ "userAgent": ua })),
 
 No `userAgentMetadata`. No `acceptLanguage`. No `platform`.
 
-CDP's `setUserAgentOverride` accepts a `userAgentMetadata` object precisely so that UA Client Hints move with the UA string. Passing only `userAgent` changes the HTTP `User-Agent` header and `navigator.userAgent`, while `navigator.userAgentData.brands`, `.platform`, and `.mobile` keep reporting the real browser and OS. `Accept-Language` is untouched as well.
+CDP's `setUserAgentOverride` accepts a `userAgentMetadata` object precisely so that UA Client Hints move with the UA string. Passing only `userAgent` desynchronises the two — the measured table below shows exactly how, and it is not the way this paragraph originally guessed.
 
 This is the handbook's named anti-pattern, verbatim:
 
@@ -242,7 +246,7 @@ This is the handbook's named anti-pattern, verbatim:
 
 Anyone who reaches for `--user-agent` today gets a client that contradicts itself on the first request — a *worse* position than not setting it at all, since the mismatch between UA and UA-CH is a stronger signal than an honest UA. It is also a correctness bug: server-side UA sniffing and client-side `userAgentData` checks in the same application will disagree.
 
-**`--user-agent` is not the worst instance — the shipped presets are.** `set device` routes through the same string-only setter (`actions.rs:7350-7369`), and its preset table installs full **iOS Safari** UA strings on a **Chromium** engine:
+**`--user-agent` is not the worst instance — the shipped presets are.** `set device` routes through the same string-only setter (`actions.rs:7536-7555`), and its preset table installs full **iOS Safari** UA strings on a **Chromium** engine:
 
 ```
 "iphone 16" => (393, 852, 3.0, true,
@@ -259,7 +263,7 @@ Anyone who reaches for `--user-agent` today gets a client that contradicts itsel
 | `navigator.userAgent` | matches header | matches header | matches header |
 | `userAgentData.brands` | 3 brands | **`[]`** | **`[]`** |
 
-Chrome does not leave stale hints — it **suppresses Client Hints entirely** and empties the brands array, and `navigator.userAgent` follows the override faithfully. So the defect is real but differently shaped than described, and arguably worse: the result is a UA string with *no* Client Hints at all, which is a combination no real Chrome 150 produces on a secure origin. An absence is harder to notice than a contradiction, and trivially checkable by a detector.
+Chrome does not leave stale hints — it **suppresses Client Hints entirely** and empties the brands array, and `navigator.userAgent` follows the override faithfully. So the defect is real but differently shaped than described, and arguably worse: the result is a UA string with *no* Client Hints at all, which the measured stock Chrome 150 control never produced on a secure origin (enterprise policy or privacy configuration could, so do not read this as universal). An absence is harder to notice than a contradiction, and trivially checkable by a detector.
 
 **The contradiction that does survive is in the hardware.** Same run, `set device "iPhone 16"`:
 
@@ -272,9 +276,9 @@ An iPhone rendering through Metal on a desktop M4. That is the citable contradic
 
 Two further defects in the preset table itself: the Android entries hardcode `Chrome/130.0.0.0` regardless of which executable is actually running, and native `set device` does not enable touch emulation, so a "mobile" persona still reports no touch points.
 
-**A second leak: new tabs navigate before they are configured.** `tab_new` issues `Target.createTarget` with the caller's URL and only then attaches (`browser.rs:1117-1164`). Measured (E02): the initial `open` carried the override, the `tab new` navigation carried `HeadlessChrome/150.0.0.0`.
+**A second leak: new tabs navigate before they are configured.** `tab_new` issues `Target.createTarget` with the caller's URL and only then attaches (`browser.rs:1284-1331`). Measured (E02): the initial `open` carried the override, the `tab new` navigation carried `HeadlessChrome/150.0.0.0`.
 
-Two scoping corrections. First, this is **not** every invocation: `should_defer_url_until_network_controls` (`actions.rs:2571-2581`) already makes `handle_tab_new` create `about:blank` first and navigate after controls are installed — but only when a domain allowlist or authenticated proxy is configured (`actions.rs:5851-5875`). The leak is the ordinary path. Encouragingly, **the fix already exists in the codebase**; it is conditioned on network containment rather than on identity.
+Two scoping corrections. First, this is **not** every invocation: `should_defer_url_until_network_controls` (`actions.rs:2698-2708`) already makes `handle_tab_new` create `about:blank` first and navigate after controls are installed — but only when a domain allowlist or authenticated proxy is configured (`actions.rs:5976-6000`). The leak is the ordinary path. Encouragingly, **the fix already exists in the codebase**; it is conditioned on network containment rather than on identity.
 
 Second, this is **not a first-request race** — measured and settled (E05). Three request classes from the same new tab, with a launch-level sentinel UA: the navigation, a subresource, and a page-initiated `fetch()` **all** carried the default UA. The override never reaches the new target at all. So the fix is larger than deferring the navigation: new targets need an initializer that replays identity and init scripts, or nothing target-scoped will ever apply to them.
 
@@ -313,7 +317,7 @@ Tier 1  Native CDP + headless Chrome, SwiftShader
 
 Tier 2  Native CDP + headful Chrome, real display, hardware GPU, full font corpus
           provides: hardware rendering, real font metrics, extensions
-                    (extensions genuinely force headful, chrome.rs:441-444),
+                    (extensions genuinely force headful, `cdp/chrome.rs:446-451`),
                     compositor-dependent layout
 
 Tier 3  Remote provider (Kernel et al.), managed environment
@@ -548,13 +552,13 @@ There is a legitimate version of site-specific configuration, and it is worth bu
 
 `cli/src/native/policy.rs` has an `ActionPolicy` returning `Allow`, `Deny`, or `RequiresConfirmation`, loaded from JSON with an `AGENT_BROWSER_CONFIRM_ACTIONS` env override. It is the closest existing thing — but calling it "already the right primitive," as an earlier draft did, overstates it in three ways that matter:
 
-- **It fails open.** `load_if_exists()` is `Self::load(&path).ok()` (`policy.rs:76-80`), so an unreadable or malformed policy file becomes `None` and every check is skipped. Reload errors are discarded too (`let _ = policy.reload()`, `actions.rs:2085`). An authorization gate that disappears when its config is broken is not a gate.
+- **It fails open.** `load_if_exists()` is `Self::load(&path).ok()` (`policy.rs:76-80`), so an unreadable or malformed policy file becomes `None` and every check is skipped. Reload errors are discarded too (`let _ = policy.reload()`, `actions.rs:2211`). An authorization gate that disappears when its config is broken is not a gate.
 - **Confirmation is not authorization.** A human clicking yes is not the site owner's approving record, and the schema has nowhere to put one.
 - **It is the wrong granularity.** The policy holds flat action-name lists, but the things needing control are process-wide: `--args`, `--extension`, and init scripts registered for *every future document*. A per-origin action check cannot contain a launch flag that has already been applied to the browser, or an init script that will run on the next redirect, popup, frame, or worker.
 
 So the authorization record belongs in a separate, **required** artifact. Merge CLI, env, config, plugin, and provider mutations into one effective launch plan; validate that plan fail-closed *before* launch; and bind the resulting session to its authorized origin set across redirects, popups, frames, workers, and later navigation. `ActionPolicy` can stay for what it is good at — gating individual actions — but it cannot carry this.
 
-There is currently **no backend or provider cascade** in the codebase — I searched for one specifically. Retry and fallback logic does exist elsewhere — transient IPC handling in `cli/src/connection.rs:1005-1081`, daemon respawn in `main.rs:1675`, a three-attempt Chrome launch retry with a 500 ms backoff in `chrome.rs:577-605`, download retry in `install.rs:256`, accessibility-tree re-query in `element.rs:345` and `:516`, and a content-extraction fallback ladder in `read.rs` — but none of it switches backend or provider. The cascade would be new construction, so it can be built with the stop-state in it from the first commit rather than retrofitted — which is the only time these boundaries actually hold.
+There is currently **no backend or provider cascade** in the codebase — I searched for one specifically. Retry and fallback logic does exist elsewhere — transient IPC handling in `cli/src/connection.rs:1005-1081`, daemon respawn in `main.rs:1675`, a three-attempt Chrome launch retry with a 500 ms backoff in `chrome.rs:585-613`, download retry in `install.rs:256`, accessibility-tree re-query in `element.rs:345` and `:516`, and a content-extraction fallback ladder in `read.rs` — but none of it switches backend or provider. The cascade would be new construction, so it can be built with the stop-state in it from the first commit rather than retrofitted — which is the only time these boundaries actually hold.
 
 ---
 
@@ -587,8 +591,8 @@ That also means the heading below is mis-titled if read as a permission claim. T
 - **Headful with a real display and hardware GPU.** Buys rendering, compositor, GPU and font fidelity, and fixes genuine layout differences. Biggest single fidelity gain — and it buys **zero** reduction in automation signalling. `--remote-debugging-port=0` sets `AutomationControlled` independently (§2.1), so dropping `--headless=new` removes one of two sufficient causes and `navigator.webdriver` stays `true`. That is exactly why this belongs in pile 1: it improves fidelity without touching a truthful signal. Anyone expecting it to quiet `webdriver` has misread the flag table.
 - **A real font corpus matched to the OS actually running.** Kernel's own history is the case study: commit `cba3f77` added fonts specifically because a three-font container was a signal. Match the real platform, not a platform you would prefer to present, and do not install everything — an implausibly complete corpus is its own outlier.
 - **Persistent profiles with single ownership.** Already supported via `--profile` (`flags.rs:257`); `--user-data-dir` is the Chrome switch the code emits, not a CLI flag. Needs leasing, encryption, and a TTL — `storageState` and cookies are bearer credentials.
-- **Note a live incompatibility before promising composability.** `ensure_allowed_domains_supported_for_launch` (`actions.rs:2596-2641`) *rejects* `--allowed-domains` combined with `--restore`, and with saved storage state, because restored state can replay origins before the allowlist is in force. So "persistent login" and "per-origin confinement" are not currently composable, and any plan offering both needs a way to activate saved state without pre-control origin replay.
-- **Stable egress per session, and fix the WebRTC trigger.** Proxy support exists; egress *stability* and IPv6/DNS policy do not. A session whose ASN changes mid-flight is incoherent no matter how good the browser is. WebRTC containment *does* exist and is well built — `chrome.rs:510-517` forces `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` and `retain`s away any user override so it cannot be weakened, and `network.rs:407-425` blocks `RTCPeerConnection` in-page. But both gate on `restrict_webrtc`, which `actions.rs:2938` and `:3707` define as `!allowed_domains.is_empty()`. **The leak protection is wired to `--allowed-domains`, not to `--proxy`**, so a proxied session without domain filtering — the natural way to use a proxy — leaks the real IP over UDP. Measured and confirmed 7/7 (E06): nothing set → `RTCPeerConnection` constructs; `--allowed-domains` → throws `SecurityError`; `--proxy` alone → constructs. Gate it on proxy configuration instead, or on both. Note also that `--allowed-domains` is rejected outright when attached over `--cdp`, so containment is simply unavailable to any CDP-attach deployment.
+- **Note a live incompatibility before promising composability.** `ensure_allowed_domains_supported_for_launch` (`actions.rs:2723-2768`) *rejects* `--allowed-domains` combined with `--restore`, and with saved storage state, because restored state can replay origins before the allowlist is in force. So "persistent login" and "per-origin confinement" are not currently composable, and any plan offering both needs a way to activate saved state without pre-control origin replay.
+- **Stable egress per session, and fix the WebRTC trigger.** Proxy support exists; egress *stability* and IPv6/DNS policy do not. A session whose ASN changes mid-flight is incoherent no matter how good the browser is. WebRTC containment *does* exist and is well built — `chrome.rs:517-524` forces `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` and `retain`s away any user override so it cannot be weakened, and `network.rs:407-425` blocks `RTCPeerConnection` in-page. But both gate on `restrict_webrtc`, which `actions.rs:3065` and `:3834` define as `!allowed_domains.is_empty()`. **The leak protection is wired to `--allowed-domains`, not to `--proxy`**, so a proxied session without domain filtering — the natural way to use a proxy — leaks the real IP over UDP. Measured and confirmed 7/7 (E06): nothing set → `RTCPeerConnection` constructs; `--allowed-domains` → throws `SecurityError`; `--proxy` alone → constructs. Gate it on proxy configuration instead, or on both. Note also that `--allowed-domains` is rejected outright when attached over `--cdp`, so containment is simply unavailable to any CDP-attach deployment.
 - **Fix §3.1 and §3.2.** Correctness wins that also remove artifacts.
 - **An identity manifest (§3.3)** that rejects contradictions before launch.
 
@@ -604,7 +608,7 @@ That also means the heading below is mis-titled if read as a permission claim. T
 
 The first three are documented flags today (§2.1), with the suppression flag used as the help-text example and the `navigator.webdriver` shim shipped as a plugin test vector. So this is not a "should we build it" question. Three things are worth doing:
 
-1. **Stop advertising it.** Change the `--args` example in `output.rs:3521` to something genuinely neutral such as `--window-size=1920,1080`. Not `--no-sandbox`, which disables a browser security boundary and is no better a recommendation than the flag it would replace. A tool's help text is a recommendation, and right now it recommends the anti-pattern to every user who runs `--help`.
+1. **Stop advertising it.** Change the `--args` example in `output.rs:3689` to something genuinely neutral such as `--window-size=1920,1080`. Not `--no-sandbox`, which disables a browser security boundary and is no better a recommendation than the flag it would replace. A tool's help text is a recommendation, and right now it recommends the anti-pattern to every user who runs `--help`.
 2. **Gate it.** These flags should require a per-origin authorization record naming the approving party — not a global `stealth: true`. The handbook's *Authorization assertion* example is the shape; §4.7 explains why `policy.rs` cannot carry it.
 3. **Log it.** Any session that suppresses a truthful signal should say so in its output, so it appears in the record rather than only in someone's shell history.
 
@@ -669,7 +673,7 @@ The remaining items have hard prerequisites, and an earlier draft listed them in
 
 These surfaced while reading for identity and coherence. They are not detection findings and do not belong in this document's thesis, but they are larger risks than most of what is above and should not be lost:
 
-- **A *present* `CI` variable silently disables the Chrome sandbox.** `should_disable_sandbox` (`chrome.rs:1321-1359`) adds `--no-sandbox` on `env::var("CI").is_ok()`, which fires for any value at all — including empty, `0`, and `false` — among other heuristics. An env var is not evidence that an equivalent isolation boundary exists.
+- **A *present* `CI` variable silently disables the Chrome sandbox.** `should_disable_sandbox` (`chrome.rs:1328-1366`) adds `--no-sandbox` on `env::var("CI").is_ok()`, which fires for any value at all — including empty, `0`, and `false` — among other heuristics. An env var is not evidence that an equivalent isolation boundary exists.
 - **Plugins are unsandboxed child processes with inherited environment and same-user filesystem and network authority.** `invoke_plugin_process` (`plugins.rs:201-217`) spawns `plugin.command` with the daemon's environment, and plugins may be installed from npm or GitHub. Capability checks, a timeout, and `kill_on_drop` exist — none of them is an OS sandbox or an environment allowlist. Combined with the `LaunchMutation` surface from §2.1, that is a direct code-execution and secret-exposure boundary — a bigger deal than any page-visible fingerprint here.
 - **Appium launches with `--relaxed-security`.** `launch_appium` (`appium.rs:166-188`) runs unpinned `npx appium --relaxed-security` with no explicit bind address, and iOS sessions built by this manager use `noReset: true`. Which insecure features that actually enables, and whether the listener is externally reachable, depend on the unpinned Appium version — do not infer reachability from the missing bind flag alone. Separately, any TCP listener on `127.0.0.1:4723` is accepted as Appium with no `/status` validation.
 - **Named-profile temp copies are best-effort.** Cleanup runs in `Drop` with three removal retries, so a `SIGKILL` bypasses it entirely and can leave a copy of a real Chrome profile — containing authentication and session material — on disk.

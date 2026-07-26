@@ -92,6 +92,17 @@ saw for that same navigation.
 correctness finding were dead code. Grep the dispatch table for who actually
 emits an action before ranking a fix.
 
+**Pin the commit you are citing, and the binary you are measuring.** The subject
+repo advanced six commits mid-analysis, from v0.32.4 to v0.33.0, while the
+installed binary stayed at 0.32.3. Nobody noticed because nothing was pinned.
+Every underlying claim survived, and **every one of 68 line citations went
+stale** — the worst shape a defect can take, because the document still reads as
+authoritative and the first citation a reader checks does not resolve. The
+handbook pins the commit for its Kernel case study and says to archive resolved
+commits for a reproducible audit; the companion applied that rule to someone
+else's repo and not to its own subject. Both snapshots are now in the companion's
+header.
+
 **A fingerprint that varies by design is not a regression signal.** We asserted
 differing JA3 as evidence before discovering JA3 differs between two loads of
 the same browser. Check whether a value is stable *at all* before building a
